@@ -92742,7 +92742,7 @@ return A.zn(A.eZ(new A.dE(B.CX,A.qu(b,p),s),s,s),B.o8,!0)},
 $S:569}
 A.tA.prototype={
 E(a){var s=null,r=A.H(a),q=new A.a1e(r)
-return A.kp(A.pc(s,s,B.a_m),A.hc(A.b([A.eZ(A.Nc("assets/images/logo.png",s,"Logo",180),s,s),B.bx,A.eZ(A.an("Version 1.0",s,s,s,r.ok.Q,s,s),s,s),B.mw,q.$1("Des cours en fran\xe7ais pour apprendre Oracle Database 19c : du premier SELECT jusqu'aux comp\xe9tences d'un DBA senior. Le niveau 1 est gratuit ; les niveaux 2 \xe0 6 sont accessibles par abonnement mensuel."),q.$1("L'application fonctionne enti\xe8rement hors ligne. Elle ne collecte aucune donn\xe9e : votre progression reste sur votre t\xe9l\xe9phone."),q.$1("Oracle et Oracle Database sont des marques d\xe9pos\xe9es d'Oracle Corporation. Cette application est ind\xe9pendante : elle n'est ni affili\xe9e \xe0 Oracle, ni approuv\xe9e par Oracle.")],t.p),s,B.cS,B.a2),s)}}
+return A.kp(A.pc(s,s,B.a_m),A.hc(A.b([A.eZ(A.Nc("assets/images/logo.png",s,"Logo",180),s,s),B.bx,A.eZ(A.an("Version 1.1",s,s,s,r.ok.Q,s,s),s,s),B.mw,q.$1("Des cours en fran\xe7ais pour apprendre Oracle Database 19c : du premier SELECT jusqu'aux comp\xe9tences d'un DBA senior. Le niveau 1 est gratuit ; les niveaux 2 \xe0 6 sont accessibles par abonnement mensuel."),q.$1("L'application fonctionne enti\xe8rement hors ligne. Elle ne collecte aucune donn\xe9e : votre progression reste sur votre t\xe9l\xe9phone."),q.$1("Oracle et Oracle Database sont des marques d\xe9pos\xe9es d'Oracle Corporation. Cette application est ind\xe9pendante : elle n'est ni affili\xe9e \xe0 Oracle, ni approuv\xe9e par Oracle.")],t.p),s,B.cS,B.a2),s)}}
 A.a1e.prototype={
 $1(a){var s=null
 return new A.aL(B.H4,A.an(a,s,s,s,this.a.ok.y,s,s),s)},
@@ -93784,7 +93784,7 @@ i=A.c1(f.a.a.h(0,"licence:id"))
 i.toString
 i="Jusqu'au "+j+" \xb7 appareil "+A.azH(i)
 j=i}else j="3 000 FCFA par mois \xb7 Orange Money ou MTN MoMo"
-return A.kp(e,A.hc(A.b([B.a_M,B.a6,new A.ou(c,h),B.dA,B.a_K,B.a6,new A.ou(s,h),B.dA,B.a_O,B.a6,new A.ou(r,h),B.dA,B.a_N,B.a6,new A.ou(q,h),B.dA,B.a_J,B.a6,new A.ou(A.b([A.xf(n,h,j,h,p,new A.aeu(this,a),k),A.xf(B.at,h,"Version 1.0",h,B.IB,new A.aev(a),"\xc0 propos")],d),h)],d),h,B.f3,B.a2),h)},
+return A.kp(e,A.hc(A.b([B.a_M,B.a6,new A.ou(c,h),B.dA,B.a_K,B.a6,new A.ou(s,h),B.dA,B.a_O,B.a6,new A.ou(r,h),B.dA,B.a_N,B.a6,new A.ou(q,h),B.dA,B.a_J,B.a6,new A.ou(A.b([A.xf(n,h,j,h,p,new A.aeu(this,a),k),A.xf(B.at,h,"Version 1.1",h,B.IB,new A.aev(a),"\xc0 propos")],d),h)],d),h,B.f3,B.a2),h)},
 tu(a){return this.a9f(a)},
 a9f(a){var s=0,r=A.Q(t.H)
 var $async$tu=A.R(function(b,c){if(b===1)return A.N(c,r)
