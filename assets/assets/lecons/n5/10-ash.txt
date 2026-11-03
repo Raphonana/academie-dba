@@ -1,0 +1,107 @@
+# ASH : l'historique des sessions actives
+@duree 10
+@resume Une photo par seconde de chaque session active, pour comprendre ce qui vient de se passer.
+
+## Le principe
+Chaque seconde, Oracle note dans une zone mémoire ce que fait **chaque session active** : quelle requête, quel événement d'attente, quel module, quel bloqueur… C'est l'**Active Session History**, visible dans `V$ACTIVE_SESSION_HISTORY`. Une session inactive n'est pas notée.
+- en mémoire, l'ASH couvre en général la dernière heure (selon l'activité) ;
+- une ligne sur dix est conservée dans `DBA_HIST_ACTIVE_SESS_HISTORY`, avec les photos AWR.
+> ASH fait partie du Diagnostics Pack, comme AWR.
+
+## Pourquoi c'est si puissant
+Comme chaque ligne représente **une seconde de temps actif**, compter des lignes revient à compter du temps : 300 lignes pour une requête, c'est environ 300 secondes de DB time. On peut tout regrouper à volonté :
+```sql
+-- Où passe le temps ?
+SELECT NVL(event, 'ON CPU') AS activite, COUNT(*) AS secondes
+FROM   v$active_session_history
+WHERE  sample_time > SYSDATE - 10/1440
+GROUP  BY NVL(event, 'ON CPU')
+ORDER  BY 2 DESC;
+
+-- Quelles requêtes ?
+SELECT sql_id, COUNT(*) AS secondes
+FROM   v$active_session_history
+GROUP  BY sql_id
+ORDER  BY 2 DESC;
+```
+Quand l'événement est NULL et que `SESSION_STATE = 'ON CPU'`, la session travaillait sur le processeur.
+
+## L'analyse d'un incident passé
+Un utilisateur dit « à 9 h 10, tout s'est figé pendant cinq minutes ». À 10 h, plus rien n'est visible dans `V$SESSION`, mais l'ASH a tout gardé : on filtre sur la période, on regroupe par événement, par requête, par `BLOCKING_SESSION`… et on retrouve le coupable.
+! N'oubliez pas : l'ASH ne voit que les sessions **actives**. Un utilisateur qui se plaint d'un écran lent alors que la base est vide de travail pointe vers le réseau, le serveur d'application ou le poste client.
+
+=== EXERCICES
+?? Affichez l'activité (l'événement, ou ON CPU s'il est vide) et le nombre de secondes passées, de la plus coûteuse à la moins coûteuse, sur toute la période de l'ASH.
+>> SELECT NVL(event, 'ON CPU') AS activite, COUNT(*) AS secondes FROM v$active_session_history GROUP BY NVL(event, 'ON CPU') ORDER BY secondes DESC, activite
+~ `NVL(event, 'ON CPU')`, puis `GROUP BY` sur la même expression. En cas d'égalité, triez aussi par activité.
+
+?? Affichez le sql_id et le nombre de secondes d'activité de chaque requête, de la plus coûteuse à la moins coûteuse.
+>> SELECT sql_id, COUNT(*) AS secondes FROM v$active_session_history GROUP BY sql_id ORDER BY secondes DESC
+
+?? Affichez le texte de la requête qui a consommé le plus de temps dans l'ASH.
+>> SELECT sql_text FROM v$sql WHERE sql_id = (SELECT sql_id FROM v$active_session_history GROUP BY sql_id ORDER BY COUNT(*) DESC FETCH FIRST 1 ROWS ONLY)
+~ Une sous-requête sur l'ASH trouve le sql_id, la requête principale va chercher son texte dans V$SQL.
+
+?? Affichez les sessions bloquantes vues par l'ASH, avec le nombre de secondes d'attente qu'elles ont causées.
+>> SELECT blocking_session, COUNT(*) AS secondes FROM v$active_session_history WHERE blocking_session IS NOT NULL GROUP BY blocking_session
+
+=== INCIDENT
+# Les caisses rament depuis ce matin
+@contexte 9 h 10. Le responsable des magasins appelle : depuis l'ouverture, chaque recherche de ventes du jour à la caisse prend 5 à 10 secondes au lieu d'être instantanée. Les clients font la queue.
+?! Par où commencez-vous ?
++ Par l'ASH des dernières minutes, regroupée par événement et par requête => 300 secondes sur 420 sont dues à une seule requête, g0bggfqrddc4w, en « db file scattered read » et en CPU : des parcours complets.
+- Par une augmentation de la SGA => Rien n'indique un manque de mémoire. Vous agiriez à l'aveugle.
+- Par un redémarrage de la base pour repartir de zéro => Les caisses seraient coupées, et la même requête recommencerait ses parcours complets dès la reprise.
+?! Vous regardez la requête :
+| SELECT l.id_vente, l.produit, l.montant
+| FROM   lignes_ventes l
+| WHERE  TRUNC(l.date_vente) = :b1
+|
+| Index sur LIGNES_VENTES : PK_LIGNES_VENTES (ID_VENTE, NUM_LIGNE),
+| IDX_LIGNES_DATE (DATE_VENTE), IDX_LIGNES_PRODUIT (PRODUIT, UNUSABLE)
++ La fonction TRUNC sur date_vente empêche d'utiliser IDX_LIGNES_DATE : Oracle lit les 141 millions de lignes => C'est la cause. Plus de 2 millions de blocs lus par exécution pour ramener 120 lignes.
+- Il manque un index sur date_vente => L'index existe, IDX_LIGNES_DATE. C'est l'écriture de la requête qui l'empêche de servir.
+- L'index IDX_LIGNES_PRODUIT inutilisable est en cause => C'est un vrai problème à corriger, mais cette requête ne filtre pas sur le produit.
+?! Les développeurs ne peuvent pas livrer avant demain. Que faites-vous pour les caisses, aujourd'hui ?
++ Créer en ligne un index sur TRUNC(date_vente) => `CREATE INDEX idx_lignes_jour ON lignes_ventes (TRUNC(date_vente)) ONLINE;` La requête l'utilise dès sa prochaine analyse : 4 lectures de blocs au lieu de 2 millions. Les caisses redeviennent instantanées.
+- Forcer l'index IDX_LIGNES_DATE avec un hint => Un hint ne peut pas rendre utilisable un index sur date_vente pour un filtre sur TRUNC(date_vente). Et il faudrait modifier l'application.
+- Lancer la requête en parallèle => Le parcours complet serait plus rapide, mais consommerait tout le serveur à chaque passage en caisse : toutes les autres applications en souffriraient.
+?! Et pour la suite ?
++ Demander aux développeurs d'écrire un intervalle sur date_vente, puis supprimer l'index provisoire => `WHERE l.date_vente >= :b1 AND l.date_vente < :b1 + 1` utilise l'index existant, sans index supplémentaire à maintenir à chaque vente. Vous recalculez aussi les statistiques de LIGNES_VENTES, vieilles de septembre.
+- Garder l'index provisoire et ne rien changer d'autre => Il marche, mais chaque vente doit maintenant mettre à jour un index de plus, pour corriger ce qu'une ligne de SQL aurait réglé.
+
+=== QUIZ
+? Que représente une ligne de V$ACTIVE_SESSION_HISTORY ?
++ Environ une seconde d'activité d'une session active
+- Une requête exécutée
+- Une connexion
+- Un bloc lu
+= C'est pour cela que compter les lignes revient à mesurer du temps.
+
+? L'événement d'une ligne ASH est NULL. Que faisait la session ?
+- Rien, elle était inactive
++ Elle travaillait sur le processeur (SESSION_STATE = ON CPU)
+- Elle attendait un verrou
+- Elle était déconnectée
+= Les sessions inactives ne sont pas enregistrées dans l'ASH.
+
+? Un incident a eu lieu il y a une heure. Où le retrouver ?
+- Dans V$SESSION
++ Dans V$ACTIVE_SESSION_HISTORY, ou DBA_HIST_ACTIVE_SESS_HISTORY s'il est plus ancien
+- Dans l'alert log uniquement
+- Nulle part
+= V$SESSION ne montre que l'instant présent.
+
+? L'ASH ne montre presque aucune activité, mais l'utilisateur trouve son écran très lent. Que penser ?
+- La base est en cause
++ Le temps est probablement perdu ailleurs : réseau, serveur d'application, poste client
+- L'ASH est en panne
+- Il faut agrandir la SGA
+= Si la base ne travaille pas, ce n'est pas elle qui fait attendre.
+
+? L'ASH est-elle gratuite ?
+- Oui
++ Non, elle fait partie du Diagnostics Pack, comme AWR
+- Seulement la vue V$
+- Seulement en Standard Edition
+= Vérifiez les licences avant de l'interroger en production.

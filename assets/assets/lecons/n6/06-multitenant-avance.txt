@@ -1,0 +1,107 @@
+# Le multitenant en pratique
+@duree 10
+@resume Créer, cloner, débrancher et rebrancher des PDB, et convertir une base non-CDB.
+
+## Créer une PDB
+```sql
+CREATE PLUGGABLE DATABASE pdb_rh
+  ADMIN USER admin_rh IDENTIFIED BY "Initial#2026"
+  FILE_NAME_CONVERT = ('/pdbseed/', '/pdb_rh/');
+ALTER PLUGGABLE DATABASE pdb_rh OPEN;
+ALTER PLUGGABLE DATABASE pdb_rh SAVE STATE;   -- la rouvrir automatiquement au redémarrage
+```
+Sans `SAVE STATE`, les PDB restent en MOUNTED après un redémarrage de la CDB, et les applications ne peuvent plus se connecter : un oubli très courant.
+
+## Cloner une PDB
+```sql
+CREATE PLUGGABLE DATABASE pdb_rh_test FROM pdb_rh;
+```
+Depuis la 12.2, avec l'undo local (par défaut), le clonage se fait **à chaud**, la source restant ouverte. Un environnement de test identique à la production, en quelques minutes. On peut aussi cloner une PDB **d'une autre CDB**, à travers un lien de base de données, et même créer un clone **rafraîchissable** qui se met à jour depuis la source.
+
+## Débrancher et rebrancher
+Une PDB peut quitter une CDB et en rejoindre une autre, par exemple une CDB déjà mise à jour dans une version plus récente :
+```sql
+-- Sur l'ancienne CDB
+ALTER PLUGGABLE DATABASE pdb_rh CLOSE IMMEDIATE;
+ALTER PLUGGABLE DATABASE pdb_rh UNPLUG INTO '/u01/app/oracle/pdb_rh.xml';
+
+-- Sur la nouvelle CDB (mêmes fichiers, visibles des deux serveurs)
+CREATE PLUGGABLE DATABASE pdb_rh USING '/u01/app/oracle/pdb_rh.xml' NOCOPY;
+```
+Le fichier XML décrit la PDB et ses fichiers. Avec `NOCOPY`, les fichiers sont réutilisés sur place.
+
+## Convertir une base non-CDB
+PRODCM, une non-CDB, devra devenir une PDB avant de passer en 21c ou 23ai :
+```sql
+-- Sur PRODCM ouverte en lecture seule
+EXEC DBMS_PDB.DESCRIBE(pdb_descr_file => '/u01/prodcm.xml');
+
+-- Sur la CDB cible
+CREATE PLUGGABLE DATABASE prodcm USING '/u01/prodcm.xml' NOCOPY;
+ALTER SESSION SET CONTAINER = prodcm;
+@?/rdbms/admin/noncdb_to_pdb.sql
+ALTER PLUGGABLE DATABASE prodcm OPEN;
+```
+L'outil **AutoUpgrade** sait faire cette conversion en même temps que la mise à niveau.
+
+## Partager l'instance proprement
+Toutes les PDB partagent la même instance : une PDB gourmande peut gêner les autres. On les encadre avec :
+- le **Resource Manager** de la CDB : des parts de CPU par PDB ;
+- les paramètres `SGA_TARGET`, `PGA_AGGREGATE_LIMIT`, `MAX_IOPS` fixés **dans** chaque PDB ;
+- les **lockdown profiles** : interdire certaines commandes ou fonctions à une PDB.
+! Rappel : en 19c, au-delà de **3 PDB** par CDB, l'option Multitenant est obligatoire.
+
+=== INCIDENT
+# Après le redémarrage, l'application RH ne se connecte plus
+@contexte Une nouvelle CDB, CDBPROD, héberge trois PDB depuis le mois dernier. Après le redémarrage prévu de ce matin pour un correctif, l'application RH reçoit ORA-01109: database not open. Les deux autres applications fonctionnent.
+?! Que vérifiez-vous ?
++ L'état des PDB dans V$PDBS => PDB_VENTES et PDB_STOCK sont en READ WRITE, mais PDB_RH est en MOUNTED.
+- Le listener => Le listener transmet bien la connexion : ORA-01109 vient de la base elle-même, qui n'est pas ouverte.
+- Les comptes verrouillés => Un compte verrouillé donnerait ORA-28000.
+?! Pourquoi PDB_RH n'a-t-elle pas redémarré comme les autres ?
++ Son état n'a jamais été enregistré avec SAVE STATE quand elle a été créée => Les deux autres ont été ouvertes puis enregistrées par le collègue qui les a créées. PDB_RH, créée plus tard, ne l'a pas été : au redémarrage de la CDB, elle reste en MOUNTED.
+- Elle est corrompue => Rien dans l'alert log ne l'indique : elle ne s'est simplement pas ouverte.
+- La licence Multitenant a expiré => Il y a trois PDB, la limite gratuite de la 19c : rien à voir.
+?! Que faites-vous ?
++ Ouvrir PDB_RH, puis enregistrer son état => `ALTER PLUGGABLE DATABASE pdb_rh OPEN;` puis `ALTER PLUGGABLE DATABASE pdb_rh SAVE STATE;`. L'application se reconnecte, et la PDB s'ouvrira seule aux prochains redémarrages.
+- Redémarrer toute la CDB => Vous coupez les deux applications qui fonctionnent, et PDB_RH resterait encore en MOUNTED.
+- Recréer PDB_RH à partir d'une sauvegarde => Elle n'a aucun problème : il suffit de l'ouvrir.
+?! Comment éviter cet oubli à l'avenir ?
++ Ajouter SAVE STATE à la procédure de création des PDB, et vérifier V$PDBS dans les contrôles après chaque redémarrage => Une ligne dans la procédure et une vérification après redémarrage suffisent.
+- Ne plus redémarrer la CDB => Les correctifs l'imposent régulièrement.
+
+=== QUIZ
+? Après un redémarrage de la CDB, une PDB reste en MOUNTED. Que manque-t-il ?
+- Une licence
++ Son état n'a pas été enregistré avec SAVE STATE
+- Un fichier de contrôle
+- Le listener
+= `ALTER PLUGGABLE DATABASE … SAVE STATE` enregistre son état ouvert.
+
+? Que permet l'undo local, par défaut depuis la 12.2 ?
+- De partager l'undo entre toutes les PDB
++ De cloner une PDB à chaud, sans fermer la source
+- De supprimer l'undo
+- De convertir une non-CDB
+= Chaque PDB a son propre tablespace d'undo.
+
+? Que produit `ALTER PLUGGABLE DATABASE … UNPLUG INTO 'fichier.xml'` ?
++ Un fichier XML qui décrit la PDB et ses fichiers, pour la rebrancher ailleurs
+- Une sauvegarde RMAN
+- Un export Data Pump
+- Une copie des données
+= Avec NOCOPY, la nouvelle CDB réutilise les fichiers sur place.
+
+? Quel script termine la conversion d'une base non-CDB en PDB ?
+- utlrp.sql
++ noncdb_to_pdb.sql
+- catalog.sql
+- awrrpt.sql
+= Il nettoie le dictionnaire pour qu'il fonctionne comme celui d'une PDB.
+
+? Comment empêcher une PDB gourmande de gêner les autres ?
+- Ce n'est pas possible
++ Avec le Resource Manager de la CDB et des limites de mémoire ou d'entrées-sorties fixées dans la PDB
+- En la mettant dans une autre CDB uniquement
+- En la passant en lecture seule
+= Toutes les PDB partagent l'instance : il faut leur fixer des règles.

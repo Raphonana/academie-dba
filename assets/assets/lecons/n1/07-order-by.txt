@@ -1,0 +1,94 @@
+# Trier et limiter les résultats
+@duree 7
+@resume ORDER BY, DISTINCT, FETCH FIRST et le piège de ROWNUM.
+
+## Sans ORDER BY, aucun ordre garanti
+Oracle renvoie les lignes dans l'ordre qui l'arrange. Le même `SELECT` peut donner un ordre différent demain. Si l'ordre compte, il faut **toujours** écrire `ORDER BY`.
+
+## ORDER BY
+```sql
+SELECT nom, salaire
+FROM   employes
+ORDER  BY salaire DESC;
+```
+- `ASC` (croissant) est la valeur par défaut, `DESC` trie en décroissant ;
+- on peut trier sur plusieurs colonnes : `ORDER BY id_service, salaire DESC` trie par service, puis par salaire décroissant dans chaque service ;
+- on peut trier sur un alias du `SELECT` : `ORDER BY salaire_annuel`.
+> Les NULL sont placés **à la fin** en tri croissant et au début en tri décroissant. On peut le changer avec `NULLS FIRST` ou `NULLS LAST`.
+
+## Supprimer les doublons : DISTINCT
+```sql
+SELECT DISTINCT id_service
+FROM   employes;    -- 10, 20, 30, 40
+```
+`DISTINCT` s'applique à toute la ligne du résultat : `SELECT DISTINCT id_service, nom` garde chaque couple différent.
+
+## Garder les N premiers : FETCH FIRST
+Depuis Oracle 12c, on limite le nombre de lignes après le tri :
+```sql
+SELECT nom, salaire
+FROM   employes
+ORDER  BY salaire DESC
+FETCH  FIRST 3 ROWS ONLY;    -- les 3 plus gros salaires
+```
+Pour paginer, on ajoute `OFFSET` : `OFFSET 3 ROWS FETCH NEXT 3 ROWS ONLY` donne les lignes 4 à 6.
+
+## Le piège de ROWNUM
+Dans du code ancien, vous verrez `ROWNUM`, un numéro donné à chaque ligne **avant** le tri :
+```sql
+SELECT nom, salaire FROM employes
+WHERE  ROWNUM <= 3
+ORDER  BY salaire DESC;    -- FAUX : prend 3 lignes au hasard, puis les trie
+```
+! `ROWNUM` est attribué pendant la lecture, avant `ORDER BY`. Avec 19c, préférez `FETCH FIRST`, qui trie d'abord.
+
+=== QUIZ
+? Sans ORDER BY, dans quel ordre Oracle renvoie-t-il les lignes ?
+- Dans l'ordre d'insertion, toujours
+- Par clé primaire croissante
++ Dans un ordre non garanti
+- Par ordre alphabétique de la première colonne
+= Seul `ORDER BY` garantit un ordre. Sans lui, l'ordre peut changer d'une exécution à l'autre.
+
+? Comment trier du plus gros au plus petit salaire ?
+- `ORDER BY salaire ASC`
++ `ORDER BY salaire DESC`
+- `ORDER BY salaire REVERSE`
+- `SORT BY salaire DOWN`
+= `DESC` = décroissant. `ASC`, croissant, est la valeur par défaut.
+
+? Que renvoie `SELECT DISTINCT id_service FROM employes;` sur notre table ?
+- 5 lignes
++ 4 lignes : 10, 20, 30 et 40
+- 1 ligne
+- 2 lignes
+= Le service 20 apparaît deux fois (NGO et FOTSO), mais DISTINCT ne le garde qu'une fois.
+
+? Quelle requête donne de façon fiable les 2 salaires les plus élevés ?
+- `WHERE ROWNUM <= 2 ORDER BY salaire DESC`
++ `ORDER BY salaire DESC FETCH FIRST 2 ROWS ONLY`
+- `SELECT TOP 2 salaire FROM employes`
+- `ORDER BY salaire LIMIT 2`
+= `FETCH FIRST` s'applique après le tri. `TOP` et `LIMIT` viennent d'autres SGBD et ne fonctionnent pas sur Oracle 19c.
+
+? En tri croissant, où apparaissent les valeurs NULL par défaut ?
+- Au début
++ À la fin
+- Elles sont exclues
+- Au milieu, à la place du zéro
+= Oracle considère NULL comme plus grand que toute valeur : en `ASC`, les NULL sont à la fin.
+
+=== EXERCICES
+?? Affichez le nom et le salaire des employés, du plus petit au plus grand salaire.
+>> SELECT nom, salaire FROM employes ORDER BY salaire
+
+?? Affichez la liste des villes où l'entreprise a un service, sans doublon.
+>> SELECT DISTINCT ville FROM services
+~ `DISTINCT` supprime les doublons.
+
+?? Affichez le nom et le salaire des 3 employés les mieux payés.
+>> SELECT nom, salaire FROM employes ORDER BY salaire DESC FETCH FIRST 3 ROWS ONLY
+~ Triez d'abord en décroissant, puis `FETCH FIRST 3 ROWS ONLY`.
+
+?? Affichez le numéro de service et le nom des employés, triés par service puis par nom.
+>> SELECT id_service, nom FROM employes ORDER BY id_service, nom

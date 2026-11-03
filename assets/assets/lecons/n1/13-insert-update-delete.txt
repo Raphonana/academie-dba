@@ -1,0 +1,101 @@
+# Modifier les données
+@duree 9
+@resume INSERT, UPDATE, DELETE, TRUNCATE et les erreurs ORA- les plus courantes.
+
+## Le DML
+`INSERT`, `UPDATE` et `DELETE` forment le **DML** (Data Manipulation Language) : ils modifient les lignes, sans toucher à la structure.
+
+## Ajouter : INSERT
+```sql
+INSERT INTO employes (id_employe, nom, prenom, salaire, id_service, id_manager)
+VALUES (6, 'ESSOMBA', 'Claire', 550000, 30, 4);
+```
+> Listez toujours les colonnes. Sans liste, il faut donner une valeur pour **chaque** colonne, dans l'ordre exact de la table, et la requête casse dès qu'on ajoute une colonne.
+Les colonnes non citées reçoivent leur valeur `DEFAULT`, ou NULL. Ici `date_embauche` vaut `SYSDATE`.
+On peut aussi insérer le résultat d'une requête :
+```sql
+INSERT INTO archive_employes (id_employe, nom)
+SELECT id_employe, nom FROM employes WHERE id_service = 40;
+```
+
+## Modifier : UPDATE
+```sql
+UPDATE employes
+SET    salaire = salaire * 1.05,
+       prime   = 30000
+WHERE  id_employe = 3;
+```
+! Un `UPDATE` ou un `DELETE` **sans WHERE** touche toutes les lignes de la table. Avant de lancer un `UPDATE`, exécutez le `SELECT` avec le même `WHERE` pour voir les lignes concernées.
+
+## Supprimer : DELETE
+```sql
+DELETE FROM employes
+WHERE  id_employe = 6;
+```
+
+## Vider une table : TRUNCATE
+`TRUNCATE TABLE archive_employes;` supprime **toutes** les lignes, très vite, en libérant l'espace. Mais c'est du **DDL** : il ne prend pas de `WHERE` et ne peut pas être annulé par `ROLLBACK`.
+
+## Les erreurs que vous verrez souvent
+- **ORA-00001** : unique constraint violated. Valeur déjà présente dans une clé primaire ou une colonne `UNIQUE`.
+- **ORA-01400** : cannot insert NULL into… Une colonne `NOT NULL` n'a pas reçu de valeur.
+- **ORA-02291** : integrity constraint violated - parent key not found. La clé étrangère pointe vers une ligne qui n'existe pas (par exemple `id_service = 99`).
+- **ORA-02292** : integrity constraint violated - child record found. On tente de supprimer un service qui a encore des employés.
+- **ORA-02290** : check constraint violated. Une condition `CHECK` n'est pas respectée.
+- **ORA-00942** : table or view does not exist. Nom mal écrit, mauvais schéma, ou droits manquants.
+
+=== QUIZ
+? Que fait `UPDATE employes SET salaire = 0;` ?
+- Il met à zéro le salaire du premier employé
++ Il met à zéro le salaire de tous les employés
+- Il provoque une erreur faute de WHERE
+- Il ne fait rien sans COMMIT
+= Sans `WHERE`, toutes les lignes sont modifiées. (La contrainte `CHECK (salaire > 0)` de la leçon précédente bloquerait ici l'opération, mais ne comptez pas dessus !)
+
+? Quelle erreur obtient-on en insérant un employé avec `id_service = 99` (service inexistant) ?
+- ORA-00001
+- ORA-01400
++ ORA-02291
+- ORA-00942
+= La clé étrangère exige que le service 99 existe dans la table parente `SERVICES` : « parent key not found ».
+
+? On veut supprimer le service 20, qui a encore deux employés. Que se passe-t-il ?
+- Les deux employés sont supprimés automatiquement
++ ORA-02292 : des lignes enfants existent
+- Le service est supprimé et les employés gardent id_service = 20
+- ORA-00001
+= Par défaut, Oracle protège l'intégrité : on ne peut pas supprimer un parent qui a encore des enfants.
+
+? Quelle différence importante entre DELETE et TRUNCATE ?
+- DELETE est plus rapide
++ TRUNCATE est du DDL : il vide toute la table et ne peut pas être annulé par ROLLBACK
+- TRUNCATE accepte un WHERE
+- Aucune différence
+= `DELETE` est du DML, filtrable et annulable. `TRUNCATE` vide tout, d'un coup, définitivement.
+
+? Pourquoi lister les colonnes dans un INSERT ?
+- C'est obligatoire
++ Pour ne pas dépendre de l'ordre des colonnes et laisser les autres prendre leur valeur par défaut
+- Pour aller plus vite
+- Pour éviter les doublons
+= Avec une liste explicite, l'INSERT reste correct même si la table évolue.
+
+=== EXERCICES
+?? Ajoutez l'employée Claire ESSOMBA : numéro 6, salaire 550 000, service 30, manager 4.
+>> INSERT INTO employes (id_employe, nom, prenom, salaire, id_service, id_manager)
+>> VALUES (6, 'ESSOMBA', 'Claire', 550000, 30, 4)
+== SELECT id_employe, nom, prenom, salaire, id_service, id_manager FROM employes ORDER BY id_employe
+~ Listez les colonnes, puis les valeurs dans le même ordre.
+
+?? Augmentez de 10 % le salaire de tous les employés du service 20.
+>> UPDATE employes SET salaire = salaire * 1.1 WHERE id_service = 20
+== SELECT id_employe, salaire FROM employes ORDER BY id_employe
+~ N'oubliez pas le WHERE !
+
+?? Supprimez les employés du service 40.
+>> DELETE FROM employes WHERE id_service = 40
+== SELECT id_employe FROM employes ORDER BY id_employe
+
+?? Donnez une prime de 25 000 à tous les employés qui n'en ont pas.
+>> UPDATE employes SET prime = 25000 WHERE prime IS NULL
+== SELECT id_employe, prime FROM employes ORDER BY id_employe

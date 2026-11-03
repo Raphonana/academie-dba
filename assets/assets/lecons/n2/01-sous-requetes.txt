@@ -1,0 +1,109 @@
+# Les sous-requêtes
+@duree 9
+@resume Une requête dans la requête : dans le WHERE, dans le FROM, dans le SELECT.
+
+## Le principe
+Une **sous-requête** est un `SELECT` écrit entre parenthèses à l'intérieur d'une autre instruction. Oracle l'exécute pour obtenir une valeur ou une liste, puis s'en sert dans la requête principale.
+Exemple : qui gagne plus que la moyenne ? On ne connaît pas la moyenne à l'avance, une sous-requête la calcule.
+```sql
+SELECT nom, salaire
+FROM   employes
+WHERE  salaire > (SELECT AVG(salaire) FROM employes);
+-- MBARGA et NGO (la moyenne vaut 850 000)
+```
+
+## Sous-requête scalaire : une seule valeur
+Après `=`, `<`, `>`… la sous-requête doit renvoyer **une seule ligne et une seule colonne**. Si elle en renvoie plusieurs, Oracle refuse :
+```sql
+SELECT nom FROM employes
+WHERE  id_service = (SELECT id_service FROM services WHERE ville = 'Douala');
+-- ORA-01427: single-row subquery returns more than one row
+```
+! Douala a deux services (20 et 30). Une requête qui marche aujourd'hui peut casser demain, le jour où une deuxième ligne apparaît. Si plusieurs valeurs sont possibles, utilisez `IN`.
+
+## Sous-requête de liste : IN
+```sql
+SELECT nom FROM employes
+WHERE  id_service IN (SELECT id_service FROM services WHERE ville = 'Douala');
+-- NGO, FOTSO, ATANGA
+```
+
+## Sous-requête dans le FROM : la vue en ligne
+Une sous-requête peut servir de table. On l'appelle une **vue en ligne** (inline view), et on lui donne un alias :
+```sql
+SELECT s.nom, m.masse
+FROM   services s
+JOIN   (SELECT id_service, SUM(salaire) AS masse
+        FROM   employes
+        GROUP  BY id_service) m
+ON     m.id_service = s.id_service
+WHERE  m.masse > 1000000;
+```
+C'est utile pour filtrer ou joindre sur un résultat déjà agrégé.
+
+## Sous-requête dans le SELECT
+Une sous-requête scalaire peut aussi calculer une colonne, pour chaque ligne :
+```sql
+SELECT e.nom,
+       (SELECT s.ville FROM services s WHERE s.id_service = e.id_service) AS ville
+FROM   employes e;
+```
+> Cette forme est lisible, mais une jointure est souvent plus efficace dès que les tables sont grosses. Nous comparerons les deux au niveau Performance.
+
+=== EXERCICES
+?? Affichez le nom et le salaire des employés qui gagnent plus que la moyenne de l'entreprise.
+>> SELECT nom, salaire FROM employes WHERE salaire > (SELECT AVG(salaire) FROM employes)
+~ La sous-requête `(SELECT AVG(salaire) FROM employes)` donne la moyenne.
+
+?? Affichez le nom des employés qui travaillent dans un service situé à Douala, avec `IN` et une sous-requête sur `SERVICES`.
+>> SELECT nom FROM employes WHERE id_service IN (SELECT id_service FROM services WHERE ville = 'Douala')
+~ `= (SELECT …)` provoquerait ORA-01427 : Douala a deux services.
+
+?? Affichez le nom de l'employé le moins payé, sans écrire son salaire dans la requête.
+>> SELECT nom FROM employes WHERE salaire = (SELECT MIN(salaire) FROM employes)
+
+?? Affichez le nom du service et sa masse salariale, pour les services dont la masse dépasse 1 000 000, à l'aide d'une vue en ligne.
+>> SELECT s.nom, m.masse
+>> FROM services s
+>> JOIN (SELECT id_service, SUM(salaire) AS masse FROM employes GROUP BY id_service) m
+>> ON m.id_service = s.id_service
+>> WHERE m.masse > 1000000
+~ Calculez les masses dans une sous-requête du FROM, puis joignez-la à SERVICES.
+
+=== QUIZ
+? Que se passe-t-il si une sous-requête placée après `=` renvoie deux lignes ?
+- Oracle prend la première
+- Oracle prend la plus grande
++ Oracle lève ORA-01427
+- Oracle renvoie deux fois plus de lignes
+= Après un opérateur de comparaison simple, la sous-requête doit renvoyer une seule ligne. Sinon : ORA-01427.
+
+? Quel opérateur utiliser quand la sous-requête peut renvoyer plusieurs valeurs ?
+- `=`
++ `IN`
+- `LIKE`
+- `BETWEEN`
+= `IN` accepte une liste de valeurs, quel que soit leur nombre.
+
+? Comment appelle-t-on une sous-requête placée dans le FROM ?
+- Une sous-requête scalaire
++ Une vue en ligne
+- Une vue matérialisée
+- Une jointure externe
+= Elle se comporte comme une table temporaire, le temps de la requête.
+
+? Que renvoie cette requête ?
+| SELECT nom FROM employes
+| WHERE salaire = (SELECT MAX(salaire) FROM employes);
++ Le nom de l'employé (ou des employés) le mieux payé
+- Le salaire maximum
+- Tous les employés triés par salaire
+- Une erreur ORA-01427
+= `MAX` renvoie toujours une seule valeur. S'il y avait deux salaires maximum égaux, les deux noms sortiraient.
+
+? Dans une vue en ligne, comment écrit-on l'alias de la sous-requête dans Oracle ?
+- `(SELECT …) AS m`
++ `(SELECT …) m`
+- `m = (SELECT …)`
+- Il n'y a pas d'alias possible
+= Comme pour une table, l'alias s'écrit sans `AS`.

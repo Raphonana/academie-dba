@@ -1,0 +1,76 @@
+# Data Guard : le principe
+@duree 10
+@resume Une base de secours alimentée par le redo, les modes de protection et Active Data Guard.
+
+## Une copie toujours à jour
+Avec **Data Guard**, une base **primaire** envoie en continu son redo à une ou plusieurs bases **de secours** (standby), en général dans un autre site. La base de secours applique ce redo et reste ainsi une copie quasi identique de la primaire.
+- **standby physique** : une copie bloc à bloc, qui applique le redo (*Redo Apply*). C'est le cas le plus courant, et le plus simple ;
+- **standby logique** : rejoue les ordres SQL déduits du redo ; plus souple mais plus contraignant, rare aujourd'hui.
+Data Guard est **inclus** dans l'Enterprise Edition.
+
+## Le transport du redo
+- **ASYNC** : la primaire envoie le redo sans attendre l'accusé de réception. Aucun impact sur les COMMIT, mais quelques secondes de données peuvent être perdues en cas de catastrophe ;
+- **SYNC** : le COMMIT attend que la base de secours ait reçu le redo. Aucune perte, mais chaque COMMIT subit la latence réseau entre les deux sites ;
+- **FASTSYNC** : la base de secours accuse réception dès que le redo est en mémoire, sans attendre l'écriture sur disque.
+
+## Les trois modes de protection
+- **Maximum Performance** (par défaut, ASYNC) : la performance d'abord, une petite perte possible ;
+- **Maximum Availability** (SYNC ou FASTSYNC) : aucune perte en temps normal ; si la base de secours ne répond plus, la primaire continue seule plutôt que de s'arrêter ;
+- **Maximum Protection** (SYNC) : aucune perte, jamais. Si aucune base de secours ne peut accuser réception, la primaire **s'arrête**. Réservé aux cas extrêmes, avec au moins deux bases de secours.
+
+## Préparer la primaire
+```sql
+ALTER DATABASE FORCE LOGGING;              -- même les opérations NOLOGGING génèrent du redo
+ALTER DATABASE ADD STANDBY LOGFILE …;      -- fichiers redo de réception, côté secours
+ALTER SYSTEM SET log_archive_dest_2 =
+  'SERVICE=PRODCM_DR ASYNC VALID_FOR=(ONLINE_LOGFILES,PRIMARY_ROLE) DB_UNIQUE_NAME=PRODCM_DR';
+```
+La base de secours est créée par une copie RMAN (`DUPLICATE TARGET DATABASE FOR STANDBY FROM ACTIVE DATABASE`). On la surveille par son **retard** : `V$DATAGUARD_STATS` donne le *transport lag* et l'*apply lag*.
+! Sans `FORCE LOGGING`, une opération en NOLOGGING (un chargement direct, une création d'index) n'envoie pas ses données à la base de secours. Le jour du basculement, ces blocs sont inutilisables.
+
+## Active Data Guard
+L'option **Active Data Guard** (payante) permet d'ouvrir la base de secours **en lecture seule tout en appliquant le redo**. On y déporte les rapports, les extractions, et même les sauvegardes RMAN, ce qui soulage la primaire. Elle répare aussi automatiquement les blocs corrompus d'une base à partir de l'autre.
+> Une **snapshot standby** (gratuite) s'ouvre temporairement en lecture-écriture pour des tests, puis revient en arrière et rattrape son retard. Idéal pour tester une livraison sur des données de production.
+
+=== EXERCICES
+?? PRODCM remplit-elle la première condition de Data Guard, le mode ARCHIVELOG ? Affichez son nom et son mode d'archivage.
+>> SELECT name, log_mode FROM v$database
+
+?? Affichez la valeur du paramètre `log_archive_dest_1`, la seule destination d'archivage actuelle.
+>> SELECT value FROM v$parameter WHERE name = 'log_archive_dest_1'
+
+=== QUIZ
+? Comment une base de secours physique reste-t-elle à jour ?
+- Par une copie RMAN chaque nuit
++ En recevant et en appliquant en continu le redo de la primaire
+- Par des exports Data Pump
+- Par des triggers
+= C'est le Redo Apply.
+
+? Quel mode de transport garantit l'absence de perte de données ?
+- ASYNC
++ SYNC
+- NOLOGGING
+- Aucun
+= Le COMMIT attend l'accusé de réception de la base de secours, au prix de la latence réseau.
+
+? En Maximum Availability, que fait la primaire si la base de secours ne répond plus ?
+- Elle s'arrête
++ Elle continue seule, puis resynchronise quand la base de secours revient
+- Elle bascule en NOARCHIVELOG
+- Elle passe en lecture seule
+= Seul le mode Maximum Protection arrête la primaire.
+
+? Pourquoi activer FORCE LOGGING sur la primaire ?
++ Pour que les opérations NOLOGGING envoient quand même leurs modifications à la base de secours
+- Pour accélérer les COMMIT
+- Pour réduire le redo
+- Pour activer Active Data Guard
+= Sans lui, des blocs seraient inutilisables sur la base de secours.
+
+? Que permet l'option payante Active Data Guard ?
+- Créer une base de secours
++ Ouvrir la base de secours en lecture seule pendant qu'elle applique le redo
+- Passer en Maximum Protection
+- Supprimer les sauvegardes
+= Les rapports et les sauvegardes peuvent alors tourner sur la base de secours.

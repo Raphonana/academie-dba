@@ -1,0 +1,74 @@
+# La mémoire partagée : la SGA
+@duree 9
+@resume Buffer cache, shared pool, redo log buffer, et la gestion automatique de la mémoire.
+
+## La SGA
+La **SGA** (System Global Area) est la mémoire partagée par toutes les sessions de l'instance. Elle est réservée au démarrage. Ses principaux composants :
+- le **buffer cache** : les blocs de données lus sur disque. Une requête qui trouve son bloc en mémoire évite une lecture physique, des milliers de fois plus lente ;
+- la **shared pool** : le code SQL et PL/SQL analysé (library cache) et les définitions du dictionnaire (dictionary cache). Une requête déjà vue peut réutiliser son plan d'exécution ;
+- le **redo log buffer** : les modifications en attente d'écriture dans les fichiers redo. Il est petit (quelques dizaines de Mo) ;
+- la **large pool** : la mémoire des sauvegardes RMAN, des requêtes parallèles et du shared server ;
+- la **java pool** et la **streams pool** : pour Java dans la base et pour la réplication.
+
+## Qui fixe les tailles ?
+Trois façons de gérer la mémoire :
+- **ASMM** (Automatic Shared Memory Management) : on fixe `SGA_TARGET`, Oracle répartit entre buffer cache, shared pool, etc. selon les besoins. C'est le réglage le plus courant ;
+- **AMM** (Automatic Memory Management) : on fixe `MEMORY_TARGET`, Oracle répartit entre SGA **et** PGA ;
+- **manuelle** : on fixe chaque taille (`DB_CACHE_SIZE`, `SHARED_POOL_SIZE`…).
+! Sous Linux, AMM est incompatible avec les **HugePages**, qui sont pourtant recommandées dès que la SGA dépasse quelques Go. Sur un serveur de production, on préfère donc ASMM (`MEMORY_TARGET = 0`) avec les HugePages.
+
+## Voir la SGA
+```sql
+SELECT name, ROUND(value / 1048576) AS mo FROM v$sga;
+
+SELECT name, value FROM v$parameter
+WHERE  name IN ('sga_target', 'sga_max_size', 'memory_target');
+```
+> Une shared pool trop petite donne l'erreur **ORA-04031: unable to allocate … bytes of shared memory**. Souvent, la vraie cause est une application qui n'utilise pas de variables de liaison et remplit la shared pool de requêtes toutes différentes.
+
+=== EXERCICES
+?? Affichez chaque composant de `V$SGA` avec sa taille en Mo, arrondie.
+>> SELECT name, ROUND(value / 1048576) AS mo FROM v$sga
+
+?? Affichez la taille totale de la SGA en Mo, arrondie.
+>> SELECT ROUND(SUM(value) / 1048576) AS total_mo FROM v$sga
+
+?? Affichez le nom et la valeur des paramètres `sga_target`, `memory_target` et `pga_aggregate_target`.
+>> SELECT name, value FROM v$parameter WHERE name IN ('sga_target', 'memory_target', 'pga_aggregate_target')
+~ `WHERE name IN (…)`, les noms de paramètres sont en minuscules.
+
+=== QUIZ
+? Que contient le buffer cache ?
+- Les plans d'exécution
++ Des copies en mémoire des blocs de données lus sur disque
+- Les mots de passe
+- Les fichiers redo
+= Plus il est efficace, moins Oracle lit sur disque.
+
+? Où Oracle garde-t-il les requêtes SQL déjà analysées ?
+- Dans le buffer cache
++ Dans la shared pool (library cache)
+- Dans la PGA
+- Dans le fichier de contrôle
+= Réutiliser une requête analysée évite un « hard parse », coûteux en processeur.
+
+? Quel paramètre active la gestion automatique de la SGA (ASMM) ?
++ SGA_TARGET
+- MEMORY_TARGET
+- DB_CACHE_SIZE
+- PGA_AGGREGATE_TARGET
+= MEMORY_TARGET active AMM, qui gère SGA et PGA ensemble.
+
+? Pourquoi éviter AMM sur un gros serveur Linux ?
+- AMM n'existe pas en 19c
++ AMM est incompatible avec les HugePages
+- AMM est trop lent au démarrage
+- AMM ne gère pas la shared pool
+= Les HugePages réduisent fortement le coût de gestion mémoire du système pour une grosse SGA.
+
+? Une application génère des milliers de requêtes qui ne diffèrent que par une valeur littérale. Quelle erreur risque d'apparaître ?
+- ORA-01555
++ ORA-04031
+- ORA-00942
+- ORA-01652
+= La shared pool se remplit de requêtes uniques et se fragmente. Les variables de liaison règlent le problème.

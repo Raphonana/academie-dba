@@ -1,0 +1,105 @@
+# Restaurer et récupérer
+@duree 10
+@resume RESTORE puis RECOVER : perte d'un fichier, du fichier de contrôle, retour à une heure précise.
+
+## Deux verbes à ne pas confondre
+- **RESTORE** : recopier des fichiers depuis une sauvegarde. Le fichier revient, mais « en retard » : tel qu'il était au moment de la sauvegarde ;
+- **RECOVER** : appliquer les sauvegardes incrémentales, les archives et les redo pour amener le fichier jusqu'au présent (ou jusqu'à un instant choisi).
+Une restauration complète, c'est toujours RESTORE **puis** RECOVER.
+
+## Perte d'un fichier de données ordinaire
+Un seul fichier perdu (pas SYSTEM ni UNDO) : la base reste ouverte pour tout le reste.
+```sql
+RMAN> ALTER DATABASE DATAFILE 7 OFFLINE;
+RMAN> RESTORE DATAFILE 7;
+RMAN> RECOVER DATAFILE 7;
+RMAN> ALTER DATABASE DATAFILE 7 ONLINE;
+```
+Seuls les objets de ce fichier sont indisponibles pendant l'opération. Aucune donnée validée n'est perdue.
+> La perte du fichier du tablespace SYSTEM ou de l'undo arrête la base : on restaure et on récupère en MOUNT.
+
+## Perte de tous les fichiers de contrôle
+```sql
+RMAN> STARTUP NOMOUNT;
+RMAN> RESTORE CONTROLFILE FROM AUTOBACKUP;
+RMAN> ALTER DATABASE MOUNT;
+RMAN> RECOVER DATABASE;
+RMAN> ALTER DATABASE OPEN RESETLOGS;
+```
+`OPEN RESETLOGS` remet à zéro les numéros de séquence du redo et crée une nouvelle **incarnation** de la base. Juste après, faites une sauvegarde complète.
+! Si une seule copie du fichier de contrôle est perdue (les autres sont intactes), on ne restaure rien : on arrête, on recopie une copie saine à la place de la perdue, et on redémarre.
+
+## Revenir à une heure précise
+Quelqu'un a supprimé une table importante à 14 h 32 ? La récupération **incomplète** (point-in-time recovery) ramène la base à 14 h 31 :
+```sql
+RMAN> RUN {
+  SET UNTIL TIME "TO_DATE('28/10/2026 14:31:00', 'DD/MM/YYYY HH24:MI:SS')";
+  RESTORE DATABASE;
+  RECOVER DATABASE;
+}
+RMAN> ALTER DATABASE OPEN RESETLOGS;
+```
+Tout ce qui a été fait après 14 h 31 est perdu, pour **toute** la base. Avant d'en arriver là, cherchez une solution plus ciblée : corbeille (`FLASHBACK TABLE … TO BEFORE DROP`), flashback query, ou restauration de la base sur un autre serveur pour en extraire la table.
+> Le **Data Recovery Advisor** (`LIST FAILURE`, `ADVISE FAILURE`, `REPAIR FAILURE`) diagnostique et propose un script de réparation. Pratique en 19c, mais lisez toujours ce qu'il propose avant de le lancer.
+
+=== EXERCICES
+?? Affichez le numéro, le nom et le tablespace du fichier de données numéro 7.
+>> SELECT file_id, file_name, tablespace_name FROM dba_data_files WHERE file_id = 7
+
+?? Affichez le nom des segments contenus dans le tablespace du fichier 7, c'est-à-dire ceux qui seraient indisponibles pendant sa restauration.
+>> SELECT segment_name FROM dba_segments WHERE tablespace_name = (SELECT tablespace_name FROM dba_data_files WHERE file_id = 7)
+
+=== INCIDENT
+# Un fichier de données a disparu
+@contexte 15 h. Les recherches de ventes par date échouent : ORA-01116: error in opening database file 7, ORA-01110: data file 7: '/u02/oradata/PRODCM/app_index01.dbf'. Le reste de l'application fonctionne. L'équipe système a remplacé un disque défaillant ce matin.
+?! Que se passe-t-il ?
++ Le fichier 7, qui contient les index de APP_INDEX, est illisible ou absent => Oracle ne peut plus ouvrir ce fichier. Tout ce qui ne dépend pas de ces index continue de fonctionner.
+- Toute la base est corrompue => Non : un seul fichier est en cause, et la base est ouverte.
+- Le listener a un problème => Les connexions passent ; c'est un fichier de données qui pose problème.
+?! Quelle stratégie choisissez-vous ?
+- Restaurer toute la base à partir de la sauvegarde de la nuit => Vous arrêteriez tout le monde pendant des heures, et la sauvegarde de la nuit a échoué : il faudrait remonter plus loin.
++ Restaurer et récupérer uniquement le fichier 7, base ouverte => Seuls les objets de ce fichier sont indisponibles pendant l'opération. Les autres applications continuent.
+- Recréer le tablespace APP_INDEX vide => Vous perdriez tous les index, à reconstruire un par un pendant des heures, avec des requêtes catastrophiquement lentes en attendant.
+?! Dans quel ordre lancez-vous les commandes RMAN ?
+- RECOVER DATAFILE 7, puis RESTORE DATAFILE 7 => Dans l'autre sens : on ne peut appliquer les archives qu'à un fichier déjà restauré.
++ DATAFILE 7 OFFLINE, RESTORE DATAFILE 7, RECOVER DATAFILE 7, DATAFILE 7 ONLINE => Le fichier revient de la sauvegarde, RMAN applique les incrémentales et les archives jusqu'au présent, puis le fichier repasse en ligne. Aucune donnée perdue.
+- RESTORE DATABASE UNTIL TIME 'ce matin' => Une récupération incomplète ferait perdre à toute la base le travail de la journée. Rien ne la justifie ici.
+?! Le fichier est de nouveau en ligne. Et ensuite ?
++ Vérifier dans l'alert log que tout est propre, puis faire une sauvegarde complète => Les sauvegardes échouaient depuis deux nuits : c'est le moment d'en avoir une bonne. Et vous signalez à l'équipe système de prévenir avant toute intervention sur les disques de la base.
+- Rien de plus => La base n'a toujours pas de sauvegarde récente réussie.
+
+=== QUIZ
+? Quelle est la différence entre RESTORE et RECOVER ?
++ RESTORE recopie les fichiers depuis une sauvegarde ; RECOVER applique le redo pour les amener jusqu'au présent
+- Ce sont deux synonymes
+- RECOVER est plus rapide que RESTORE
+- RESTORE ne fonctionne qu'avec Data Pump
+= On restaure d'abord, on récupère ensuite.
+
+? Un fichier de données ordinaire est perdu. Faut-il arrêter la base ?
+- Oui, toujours
++ Non : on le met hors ligne, on le restaure et on le récupère, base ouverte
+- Oui, sauf en NOARCHIVELOG
+- Non, mais il faut redémarrer le listener
+= Seuls SYSTEM et l'undo imposent de travailler base fermée.
+
+? Quand faut-il ouvrir la base avec RESETLOGS ?
+- Après chaque restauration
++ Après une récupération incomplète ou la restauration d'un fichier de contrôle
+- Après un SHUTDOWN IMMEDIATE
+- Jamais en 19c
+= Une nouvelle incarnation commence. Faites une sauvegarde complète juste après.
+
+? Une seule des deux copies du fichier de contrôle est perdue. Que faites-vous ?
+- RESTORE CONTROLFILE FROM AUTOBACKUP
++ J'arrête la base, je recopie la copie saine à la place de la perdue, et je redémarre
+- RECOVER DATABASE UNTIL CANCEL
+- Je recrée la base
+= Les copies multiplexées sont identiques : pas besoin de restauration.
+
+? Quelqu'un a supprimé une table il y a dix minutes. Que tentez-vous d'abord ?
+- Une récupération incomplète de toute la base
++ FLASHBACK TABLE … TO BEFORE DROP, si elle est encore dans la corbeille
+- Un import Data Pump de l'an dernier
+- Rien, c'est perdu
+= Ramener toute la base dix minutes en arrière ferait perdre le travail de tous les autres.

@@ -1,0 +1,127 @@
+{
+  "niveaux": [
+    {
+      "numero": 1,
+      "titre": "Fondations",
+      "description": "Comprendre les bases de données et écrire vos premières requêtes SQL.",
+      "lecons": [
+        "n1/01-base-de-donnees.txt",
+        "n1/02-tables-schema.txt",
+        "n1/03-types-donnees.txt",
+        "n1/04-premier-select.txt",
+        "n1/05-where.txt",
+        "n1/06-null.txt",
+        "n1/07-order-by.txt",
+        "n1/08-fonctions-texte-nombre.txt",
+        "n1/09-dates.txt",
+        "n1/10-group-by.txt",
+        "n1/11-jointures.txt",
+        "n1/12-create-table.txt",
+        "n1/13-insert-update-delete.txt",
+        "n1/14-transactions.txt",
+        "n1/15-sequences-vues.txt"
+      ]
+    },
+    {
+      "numero": 2,
+      "titre": "Développeur SQL & PL/SQL",
+      "description": "Sous-requêtes, fonctions analytiques, procédures, curseurs, triggers et packages.",
+      "lecons": [
+        "n2/01-sous-requetes.txt",
+        "n2/02-correlees-exists.txt",
+        "n2/03-ensembles.txt",
+        "n2/04-with.txt",
+        "n2/05-analytiques-rang.txt",
+        "n2/06-analytiques-calculs.txt",
+        "n2/07-hierarchiques.txt",
+        "n2/08-merge-dml.txt",
+        "n2/09-plsql-bloc.txt",
+        "n2/10-plsql-controle.txt",
+        "n2/11-plsql-exceptions.txt",
+        "n2/12-plsql-curseurs.txt",
+        "n2/13-procedures-fonctions.txt",
+        "n2/14-packages.txt",
+        "n2/15-triggers.txt",
+        "n2/16-bulk-dynamique.txt"
+      ]
+    },
+    {
+      "numero": 3,
+      "titre": "Architecture Oracle",
+      "description": "Instance et base, mémoire SGA/PGA, processus, fichiers redo, undo et tablespaces.",
+      "lecons": [
+        "n3/01-instance-base.txt",
+        "n3/02-demarrage-arret.txt",
+        "n3/03-fichiers.txt",
+        "n3/04-sga.txt",
+        "n3/05-pga-processus-serveur.txt",
+        "n3/06-processus-arriere-plan.txt",
+        "n3/07-redo-commit.txt",
+        "n3/08-undo.txt",
+        "n3/09-stockage-logique.txt",
+        "n3/10-dictionnaire.txt",
+        "n3/11-connexions-listener.txt",
+        "n3/12-multitenant.txt"
+      ]
+    },
+    {
+      "numero": 4,
+      "titre": "DBA opérationnel",
+      "description": "Utilisateurs et privilèges, RMAN, Data Pump, surveillance et incidents réels.",
+      "lecons": [
+        "n4/01-utilisateurs-profils.txt",
+        "n4/02-privileges-roles.txt",
+        "n4/03-espace-tablespaces.txt",
+        "n4/04-undo-temp.txt",
+        "n4/05-archives-fra.txt",
+        "n4/06-strategie-sauvegarde.txt",
+        "n4/07-rman.txt",
+        "n4/08-restauration.txt",
+        "n4/09-data-pump.txt",
+        "n4/10-surveillance.txt",
+        "n4/11-sessions-verrous.txt",
+        "n4/12-maintenance.txt",
+        "n4/13-parametres-spfile.txt",
+        "n4/14-patchs.txt"
+      ]
+    },
+    {
+      "numero": 5,
+      "titre": "Performance",
+      "description": "Plans d'exécution, index, statistiques, AWR, ASH et événements d'attente.",
+      "lecons": [
+        "n5/01-methode.txt",
+        "n5/02-evenements-attente.txt",
+        "n5/03-plans-execution.txt",
+        "n5/04-methodes-acces.txt",
+        "n5/05-index.txt",
+        "n5/06-jointures-physiques.txt",
+        "n5/07-statistiques-optimiseur.txt",
+        "n5/08-variables-liaison-parse.txt",
+        "n5/09-awr-addm.txt",
+        "n5/10-ash.txt",
+        "n5/11-tuning-sql.txt",
+        "n5/12-partitionnement.txt"
+      ]
+    },
+    {
+      "numero": 6,
+      "titre": "Senior",
+      "description": "Data Guard, RAC, multitenant, migrations, haute disponibilité et sécurité.",
+      "lecons": [
+        "n6/01-haute-disponibilite.txt",
+        "n6/02-data-guard.txt",
+        "n6/03-switchover-failover.txt",
+        "n6/04-rac.txt",
+        "n6/05-asm.txt",
+        "n6/06-multitenant-avance.txt",
+        "n6/07-migrations-upgrades.txt",
+        "n6/08-securite-avancee.txt",
+        "n6/09-flashback.txt",
+        "n6/10-resource-manager.txt",
+        "n6/11-licences.txt",
+        "n6/12-dba-senior.txt"
+      ]
+    }
+  ]
+}

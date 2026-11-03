@@ -1,0 +1,74 @@
+# Tablespaces, segments, extents et blocs
+@duree 9
+@resume Comment Oracle range les données, du tablespace jusqu'au bloc de 8 Ko.
+
+## Deux visions du stockage
+- **Vision physique** : des fichiers de données sur disque ;
+- **vision logique** : des **tablespaces**, qui contiennent des **segments**, faits d'**extents**, faits de **blocs**.
+Un tablespace est fait d'un ou plusieurs fichiers de données ; un fichier appartient à un seul tablespace.
+
+## Du plus petit au plus grand
+- **Bloc** : l'unité de lecture et d'écriture d'Oracle, en général **8 Ko** (`DB_BLOCK_SIZE`, fixé à la création de la base). Oracle ne lit jamais moins d'un bloc ;
+- **extent** : un ensemble de blocs contigus, réservé d'un coup pour un segment ;
+- **segment** : l'espace d'**un objet** qui stocke des données : une table, un index, une partition, un LOB. Une vue ou une procédure n'a pas de segment ;
+- **tablespace** : un conteneur de segments. On sépare en général les données des applications (APP_DATA), leurs index (APP_INDEX), le système (SYSTEM, SYSAUX), l'undo et le temporaire.
+Quand une table grossit, Oracle lui ajoute des extents. Quand le tablespace n'a plus d'espace libre et que ses fichiers ne peuvent pas grandir : **ORA-01653: unable to extend table … in tablespace …**.
+
+## Les réglages modernes
+- Tablespaces **gérés localement** (`EXTENT_MANAGEMENT LOCAL`) : l'espace libre est suivi dans le fichier lui-même. C'est la norme depuis longtemps ;
+- **ASSM** (`SEGMENT SPACE MANAGEMENT AUTO`) : Oracle gère seul le remplissage des blocs ;
+- **bigfile** : un tablespace d'un seul fichier énorme (jusqu'à 32 To avec des blocs de 8 Ko), au lieu de plusieurs fichiers de 32 Go au plus.
+
+## La ligne des hautes eaux
+Chaque segment a une **ligne des hautes eaux** (high water mark) : la limite des blocs déjà utilisés au moins une fois. Un `DELETE` vide les blocs mais **ne la baisse pas** : un parcours complet de la table lit encore tous les blocs jusqu'à cette limite, et l'espace n'est pas rendu au tablespace.
+> Pour récupérer l'espace : `TRUNCATE` (si on vide tout), `ALTER TABLE … MOVE` (puis reconstruire les index) ou `ALTER TABLE … SHRINK SPACE`.
+
+=== EXERCICES
+?? Affichez le propriétaire, le nom et la taille en Mo des 3 plus gros segments de la base.
+>> SELECT owner, segment_name, bytes / 1048576 AS mo FROM dba_segments ORDER BY bytes DESC FETCH FIRST 3 ROWS ONLY
+
+?? Affichez chaque tablespace et la taille totale de ses fichiers de données en Go, arrondie à une décimale.
+>> SELECT tablespace_name, ROUND(SUM(bytes) / 1073741824, 1) AS go FROM dba_data_files GROUP BY tablespace_name
+~ `SUM(bytes)` regroupé par tablespace, puis converti en Go.
+
+?? Affichez le nom et le type de contenu (`contents`) de chaque tablespace, ainsi que la gestion de l'espace des segments.
+>> SELECT tablespace_name, contents, segment_space_management FROM dba_tablespaces
+
+?? Affichez, pour chaque tablespace, l'espace occupé par les segments en Mo, du plus gros au plus petit.
+>> SELECT tablespace_name, SUM(bytes) / 1048576 AS mo FROM dba_segments GROUP BY tablespace_name ORDER BY mo DESC
+
+=== QUIZ
+? Dans quel ordre, du plus petit au plus grand ?
++ Bloc, extent, segment, tablespace
+- Extent, bloc, tablespace, segment
+- Segment, bloc, extent, tablespace
+- Bloc, segment, extent, tablespace
+= Des blocs forment un extent, des extents forment un segment, les segments vivent dans un tablespace.
+
+? Quelle est la taille de bloc la plus courante ?
+- 512 octets
+- 2 Ko
++ 8 Ko
+- 1 Mo
+= DB_BLOCK_SIZE est fixé à la création de la base et ne peut plus changer.
+
+? Quel objet n'a pas de segment ?
+- Une table
+- Un index
++ Une vue
+- Une partition de table
+= Une vue est une requête enregistrée : elle ne stocke aucune donnée.
+
+? Que signifie ORA-01653 ?
+- Une table n'existe pas
++ Oracle ne trouve plus d'espace pour ajouter un extent à une table dans ce tablespace
+- Le bloc est corrompu
+- La requête est trop longue
+= Il faut ajouter un fichier, agrandir un fichier, ou activer l'autoextend.
+
+? Un DELETE supprime 90 % des lignes d'une table. Que devient la ligne des hautes eaux ?
+- Elle redescend
++ Elle ne bouge pas : l'espace reste réservé au segment
+- Elle disparaît
+- Elle double
+= Les parcours complets lisent toujours autant de blocs. MOVE, SHRINK SPACE ou TRUNCATE la font redescendre.

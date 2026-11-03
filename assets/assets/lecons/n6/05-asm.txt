@@ -1,0 +1,70 @@
+# ASM : le stockage géré par Oracle
+@duree 8
+@resume Groupes de disques, redondance, groupes de défaillance et rééquilibrage.
+
+## Pourquoi ASM ?
+**ASM** (Automatic Storage Management) est un gestionnaire de volumes et un système de fichiers conçus pour les bases Oracle. Au lieu de créer des systèmes de fichiers et de répartir les fichiers à la main, on confie des disques bruts à ASM, qui :
+- répartit **chaque fichier sur tous les disques** du groupe, par morceaux de quelques Mo, pour équilibrer les accès ;
+- peut faire du **miroir** entre disques ;
+- **rééquilibre** automatiquement les données quand on ajoute ou retire un disque, base ouverte.
+ASM est fourni gratuitement avec Grid Infrastructure. C'est le stockage standard des RAC et d'Exadata.
+
+## Les groupes de disques
+Les disques sont regroupés en **groupes de disques** (disk groups), en général deux :
+- `+DATA` : les fichiers de données, les fichiers de contrôle, les redo ;
+- `+RECO` (ou `+FRA`) : la zone de récupération, avec les archives et les sauvegardes.
+Les fichiers s'appellent alors `+DATA/PRODCM/DATAFILE/app_data.284.1131552213`.
+
+## La redondance
+- **EXTERNAL** : aucun miroir, ASM compte sur la baie de stockage (RAID matériel) ;
+- **NORMAL** : chaque morceau est écrit **deux fois**, sur deux groupes de défaillance différents ;
+- **HIGH** : **trois** fois.
+Un **groupe de défaillance** (failure group) rassemble les disques qui peuvent tomber ensemble (même contrôleur, même baie). ASM ne place jamais deux copies d'un même morceau dans le même groupe de défaillance.
+
+## Administrer ASM
+ASM a sa propre instance, `+ASM`, et ses outils :
+```sql
+$ asmcmd lsdg                          -- groupes de disques, taille, espace libre
+$ asmcmd ls +DATA/PRODCM/DATAFILE
+
+SQL> SELECT name, type, total_mb, free_mb, usable_file_mb FROM v$asm_diskgroup;
+SQL> ALTER DISKGROUP data ADD DISK '/dev/mapper/asm_data05' REBALANCE POWER 8;
+SQL> SELECT operation, state, est_minutes FROM v$asm_operation;
+```
+! En redondance NORMAL, la colonne qui compte est `USABLE_FILE_MB`, pas `FREE_MB` : elle tient compte du miroir et de la place nécessaire pour reconstruire après la perte d'un disque. Un groupe peut afficher 500 Go libres et un `USABLE_FILE_MB` négatif : il ne survivrait pas à la perte d'un disque.
+
+=== QUIZ
+? Comment ASM répartit-il un fichier ?
+- Sur un seul disque
++ Par petits morceaux, sur tous les disques du groupe
+- Sur deux disques seulement
+- Selon l'ordre de création
+= Les accès sont ainsi équilibrés sur tous les disques.
+
+? Que signifie la redondance NORMAL ?
+- Aucun miroir
++ Chaque morceau est écrit deux fois, dans deux groupes de défaillance différents
+- Trois copies de chaque morceau
+- Le miroir est fait par la baie
+= HIGH fait trois copies, EXTERNAL aucune.
+
+? Qu'est-ce qu'un groupe de défaillance ?
++ Un ensemble de disques susceptibles de tomber en panne ensemble, par exemple derrière le même contrôleur
+- Un groupe de disques défectueux
+- La liste des erreurs ASM
+- Un groupe d'utilisateurs
+= ASM ne met jamais deux copies d'un morceau dans le même groupe de défaillance.
+
+? Que se passe-t-il quand on ajoute un disque à un groupe ASM ?
+- Il faut arrêter la base
++ ASM rééquilibre automatiquement les données sur tous les disques, base ouverte
+- Le disque reste vide
+- Il faut recréer le groupe
+= La vitesse du rééquilibrage se règle avec REBALANCE POWER.
+
+? En redondance NORMAL, quelle colonne indique vraiment la place disponible pour de nouveaux fichiers ?
+- TOTAL_MB
+- FREE_MB
++ USABLE_FILE_MB
+- REQUIRED_MIRROR_FREE_MB
+= Elle tient compte du miroir et de la réserve nécessaire après la perte d'un disque.

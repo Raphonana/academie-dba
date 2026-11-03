@@ -1,0 +1,108 @@
+# RMAN en pratique
+@duree 10
+@resume Configurer, sauvegarder, vérifier et nettoyer avec Recovery Manager.
+
+## Se connecter
+```sql
+$ rman target /
+RMAN> SHOW ALL;
+```
+RMAN garde l'historique des sauvegardes dans le **fichier de contrôle** (pendant `CONTROL_FILE_RECORD_KEEP_TIME` jours, 7 par défaut), et éventuellement dans un **catalogue** : une base séparée qui garde l'historique de plusieurs bases, sans limite de durée.
+
+## Configurer une fois pour toutes
+```sql
+RMAN> CONFIGURE RETENTION POLICY TO RECOVERY WINDOW OF 7 DAYS;
+RMAN> CONFIGURE CONTROLFILE AUTOBACKUP ON;
+RMAN> CONFIGURE DEVICE TYPE DISK PARALLELISM 4;
+RMAN> CONFIGURE ARCHIVELOG DELETION POLICY TO BACKED UP 1 TIMES TO DISK;
+```
+- la **politique de rétention** dit quelles sauvegardes sont encore utiles : ici, tout ce qu'il faut pour revenir à n'importe quel instant des 7 derniers jours ;
+- l'**autobackup** sauvegarde le fichier de contrôle et le spfile après chaque sauvegarde. Indispensable : c'est ce qui permet de tout reconstruire sur un serveur vide.
+
+## Sauvegarder
+```sql
+RMAN> BACKUP INCREMENTAL LEVEL 0 DATABASE PLUS ARCHIVELOG;
+RMAN> BACKUP INCREMENTAL LEVEL 1 DATABASE PLUS ARCHIVELOG;
+RMAN> BACKUP ARCHIVELOG ALL NOT BACKED UP;
+```
+RMAN ne copie que les blocs utilisés, vérifie chaque bloc au passage (il détecte les corruptions) et peut compresser (`AS COMPRESSED BACKUPSET`).
+
+## Vérifier
+```sql
+RMAN> LIST BACKUP SUMMARY;
+RMAN> REPORT NEED BACKUP;            -- fichiers mal protégés
+RMAN> RESTORE DATABASE VALIDATE;     -- lit les sauvegardes sans rien restaurer
+```
+Côté SQL, `V$RMAN_BACKUP_JOB_DETAILS` donne l'historique des travaux : début, fin, type, statut, taille.
+
+## Nettoyer
+```sql
+RMAN> CROSSCHECK BACKUP;             -- les fichiers existent-ils encore ?
+RMAN> DELETE EXPIRED BACKUP;         -- oublie ceux qui ont disparu
+RMAN> DELETE OBSOLETE;               -- supprime ce que la rétention n'exige plus
+```
+! Un travail RMAN planifié qui échoue en silence est un classique : la base tourne, personne ne regarde, et on découvre le jour de la panne que la dernière sauvegarde a trois semaines. Contrôlez le statut chaque matin.
+
+=== EXERCICES
+?? Affichez, pour chaque type de sauvegarde, le volume total sauvegardé en Go.
+>> SELECT input_type, SUM(output_bytes) / 1073741824 AS go FROM v$rman_backup_job_details GROUP BY input_type
+
+?? Affichez la date, le statut et la durée en minutes (arrondie) de chaque sauvegarde de la base (DB INCR).
+>> SELECT start_time, status, ROUND(elapsed_seconds / 60) AS minutes FROM v$rman_backup_job_details WHERE input_type = 'DB INCR'
+
+?? Affichez le nombre de sauvegardes en échec (FAILED) depuis le 27 octobre 2026.
+>> SELECT COUNT(*) FROM v$rman_backup_job_details WHERE status = 'FAILED' AND start_time >= DATE '2026-10-27'
+
+=== INCIDENT
+# RMAN-06059 : une archive a disparu
+@contexte La sauvegarde de cette nuit a échoué. Le journal RMAN se termine ainsi : RMAN-06059: expected archived log not found, loss of archived log compromises recoverability. L'équipe système reconnaît avoir « fait de la place » sur /u03 hier soir.
+?! Que signifie ce message ?
++ RMAN veut sauvegarder des archives que le fichier de contrôle croit présentes, mais qui ont été supprimées du disque => C'est cela : quelqu'un a supprimé des archives avec rm. RMAN refuse de continuer, car il y a peut-être un trou dans la chaîne du redo.
+- La base est corrompue => Les fichiers de données vont bien. C'est l'historique des archives qui n'est plus cohérent avec le disque.
+- Le disque de sauvegarde est plein => L'erreur dirait autre chose (ORA-19809 ou ORA-19502).
+?! Que faites-vous pour remettre RMAN d'accord avec la réalité ?
++ CROSSCHECK ARCHIVELOG ALL, puis DELETE EXPIRED ARCHIVELOG ALL => RMAN vérifie chaque archive, marque les disparues comme EXPIRED et les retire de son historique. Sa vision correspond de nouveau au disque.
+- Vous relancez la sauvegarde avec SKIP INACCESSIBLE et c'est réglé => La sauvegarde passera, mais vous ignorez le vrai problème : un trou dans les archives.
+- Vous restaurez la base pour récupérer les archives => Restaurer une base qui fonctionne pour des fichiers qui ne sont pas indispensables à son fonctionnement : un remède pire que le mal.
+?! Les archives supprimées n'avaient jamais été sauvegardées. Quelle est la conséquence, et que faites-vous ?
++ On ne peut plus restaurer au-delà de ce trou : il faut une sauvegarde complète de niveau 0 tout de suite => Une restauration à partir des anciennes sauvegardes s'arrêterait avant le trou. Une nouvelle sauvegarde de niveau 0 redonne un point de départ complet ; ensuite, la chaîne repart.
+- Aucune conséquence, puisque la base fonctionne => La base fonctionne, mais si elle tombait maintenant, les données postérieures au trou seraient perdues.
+?! Comment éviter que cela recommence ?
++ Configurer une politique de suppression des archives et expliquer à l'équipe système qu'on ne supprime rien dans la FRA à la main => Avec ARCHIVELOG DELETION POLICY et une FRA bien dimensionnée, Oracle fait lui-même la place, sans jamais supprimer une archive non sauvegardée.
+- Retirer les droits d'accès au serveur à l'équipe système => Ils en ont besoin pour leur travail. Le dialogue et une procédure écrite marchent mieux.
+
+=== QUIZ
+? Où RMAN garde-t-il l'historique des sauvegardes sans catalogue ?
+- Dans l'alert log
++ Dans le fichier de contrôle
+- Dans le spfile
+- Dans la FRA uniquement
+= Pendant CONTROL_FILE_RECORD_KEEP_TIME jours. Un catalogue garde l'historique sans limite.
+
+? Pourquoi activer CONTROLFILE AUTOBACKUP ?
+- Pour sauvegarder plus vite
++ Pour pouvoir reconstruire la base même après la perte de tous les fichiers de contrôle
+- Pour compresser les sauvegardes
+- Pour éviter les archives
+= L'autobackup contient le fichier de contrôle et le spfile, nécessaires pour tout redémarrer.
+
+? Que fait RESTORE DATABASE VALIDATE ?
+- Il restaure la base
++ Il lit les sauvegardes pour vérifier qu'elles sont utilisables, sans rien restaurer
+- Il supprime les sauvegardes invalides
+- Il vérifie la syntaxe des commandes RMAN
+= Le moyen le plus simple de tester ses sauvegardes sans toucher à la base.
+
+? Que supprime DELETE OBSOLETE ?
+- Les sauvegardes en échec
++ Les sauvegardes dont la politique de rétention n'a plus besoin
+- Les archives non sauvegardées
+- Les fichiers de données inutilisés
+= Avec une fenêtre de 7 jours, tout ce qui n'est plus nécessaire pour revenir 7 jours en arrière.
+
+? Que signifie le statut EXPIRED après un CROSSCHECK ?
+- La sauvegarde est trop vieille
++ Le fichier de sauvegarde n'existe plus sur le support
+- La sauvegarde est corrompue
+- La sauvegarde est en cours
+= DELETE EXPIRED retire ces entrées de l'historique.

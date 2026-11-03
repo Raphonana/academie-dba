@@ -1,0 +1,79 @@
+# Le partitionnement
+@duree 9
+@resume Découper une grosse table en morceaux : élagage, purge instantanée, index locaux et globaux.
+
+## Le principe
+Une table **partitionnée** est découpée en morceaux, les **partitions**, selon la valeur d'une colonne (la clé de partitionnement). Pour l'application, c'est toujours une seule table : les requêtes ne changent pas. Pour Oracle, chaque partition est un segment à part.
+```sql
+CREATE TABLE lignes_ventes (
+  id_vente   NUMBER,
+  num_ligne  NUMBER,
+  date_vente DATE,
+  produit    VARCHAR2(30),
+  montant    NUMBER(12,2)
+)
+PARTITION BY RANGE (date_vente)
+INTERVAL (NUMTOYMINTERVAL(1, 'MONTH'))
+(PARTITION p_2019_04 VALUES LESS THAN (DATE '2019-05-01'));
+```
+Avec **INTERVAL**, Oracle crée automatiquement une nouvelle partition chaque mois, dès qu'une vente arrive.
+
+## Les types de partitionnement
+- **RANGE** (et INTERVAL) : par plages de valeurs, typiquement des dates. Le plus courant ;
+- **LIST** : par liste de valeurs (un pays, une région, un statut) ;
+- **HASH** : réparti par un calcul, pour équilibrer des volumes sans clé naturelle ;
+- **composite** : par exemple RANGE par mois, puis HASH par client dans chaque mois.
+
+## Ce que l'on gagne
+- **l'élagage** (partition pruning) : une requête sur octobre 2026 ne lit que la partition d'octobre, pas les sept ans d'historique. Visible dans le plan (`PARTITION RANGE SINGLE`, colonnes `Pstart` et `Pstop`) ;
+- **la purge instantanée** : `ALTER TABLE lignes_ventes DROP PARTITION p_2019_04;` supprime un mois entier en une seconde, sans générer d'undo pour chaque ligne, au lieu d'un DELETE de plusieurs heures ;
+- **la maintenance par morceaux** : compresser, déplacer ou collecter les statistiques d'une seule partition ;
+- l'archivage des vieilles partitions sur un stockage moins cher.
+
+## Index locaux et globaux
+- un index **local** est lui-même partitionné comme la table : chaque partition de table a son morceau d'index. Supprimer une partition supprime son morceau d'index, sans rien casser ;
+- un index **global** couvre toute la table d'un seul tenant. Après un DROP PARTITION, il devient **UNUSABLE**, sauf si l'on ajoute `UPDATE GLOBAL INDEXES`.
+! Le partitionnement est une **option payante** de l'Enterprise Edition. Et il n'accélère que les requêtes qui filtrent sur la clé de partitionnement : mal choisi, il peut même ralentir les autres.
+
+=== EXERCICES
+?? La fonction de partitionnement est-elle utilisée sur PRODCM ? Affichez son nom, le nombre d'utilisations détectées et si elle est utilisée actuellement.
+>> SELECT name, detected_usages, currently_used FROM dba_feature_usage_statistics WHERE name LIKE 'Partitioning%'
+
+?? Affichez la taille en Go de la table LIGNES_VENTES, candidate naturelle au partitionnement par mois, et son nombre de lignes.
+>> SELECT s.bytes / 1073741824 AS go, t.num_rows FROM dba_segments s JOIN dba_tab_statistics t ON t.owner = s.owner AND t.table_name = s.segment_name WHERE s.segment_name = 'LIGNES_VENTES'
+
+=== QUIZ
+? Qu'est-ce que l'élagage de partitions ?
++ Oracle ne lit que les partitions concernées par le filtre de la requête
+- La suppression des vieilles partitions
+- La compression des partitions
+- Le calcul des statistiques par partition
+= Il n'a lieu que si la requête filtre sur la clé de partitionnement.
+
+? Quel est l'avantage de DROP PARTITION sur un DELETE pour purger un mois ?
+- Aucun
++ Il est quasi instantané et ne génère pas d'undo ligne par ligne
+- Il garde les données en corbeille
+- Il est gratuit
+= Un DELETE de millions de lignes peut prendre des heures et remplir l'undo.
+
+? Que fait INTERVAL dans un partitionnement par plages ?
+- Il fixe la durée de rétention
++ Il crée automatiquement les nouvelles partitions quand des données arrivent
+- Il compresse les partitions
+- Il supprime les partitions vides
+= Plus besoin de créer à l'avance la partition du mois suivant.
+
+? Que devient un index global après un DROP PARTITION sans option particulière ?
+- Il est mis à jour automatiquement
++ Il devient UNUSABLE
+- Il est supprimé
+- Il devient local
+= `UPDATE GLOBAL INDEXES` le maintient pendant l'opération.
+
+? Le partitionnement est-il inclus dans l'Enterprise Edition ?
+- Oui, gratuitement
++ Non, c'est une option payante
+- Seulement en Standard Edition
+- Seulement pour les tables de moins de 1 To
+= Comme tous les packs et options, il faut une licence avant de l'utiliser.

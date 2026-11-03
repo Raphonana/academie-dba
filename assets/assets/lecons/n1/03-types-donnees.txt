@@ -1,0 +1,68 @@
+# Les types de données
+@duree 7
+@resume VARCHAR2, NUMBER, DATE, TIMESTAMP, CLOB… choisir le bon type pour chaque colonne.
+
+## Pourquoi un type ?
+Chaque colonne a un **type** qui fixe ce qu'elle peut contenir. Oracle refuse de mettre du texte dans une colonne numérique. Le type permet aussi à Oracle de bien trier, de bien calculer et de stocker les données de façon compacte.
+
+## Le texte : VARCHAR2 et CHAR
+- `VARCHAR2(n)` : texte de longueur variable, jusqu'à `n` caractères ou octets. C'est le type texte à utiliser par défaut.
+- `CHAR(n)` : texte de longueur **fixe**. Une valeur plus courte est complétée par des espaces. Rarement utile, sauf pour des codes de taille fixe.
+```sql
+nom      VARCHAR2(50)
+code_pays CHAR(2)
+```
+! En 19c, un `VARCHAR2` est limité à 4 000 octets (32 767 si le paramètre `MAX_STRING_SIZE` vaut `EXTENDED`). Attention : un caractère accentué peut occuper plusieurs octets. Écrivez `VARCHAR2(50 CHAR)` pour compter en caractères.
+
+## Les nombres : NUMBER
+`NUMBER(p, s)` stocke un nombre exact : `p` chiffres au total (la précision), dont `s` après la virgule (l'échelle).
+- `NUMBER(10)` : un entier jusqu'à 10 chiffres, idéal pour un identifiant ou un salaire en FCFA ;
+- `NUMBER(8,2)` : jusqu'à 999 999,99, idéal pour un montant en euros ;
+- `NUMBER` sans précision : n'importe quel nombre.
+
+## Les dates : DATE et TIMESTAMP
+- `DATE` contient la date **et l'heure** à la seconde près. Le nom est trompeur : une `DATE` Oracle a toujours une heure, même si elle vaut 00:00:00.
+- `TIMESTAMP` ajoute les fractions de seconde ; `TIMESTAMP WITH TIME ZONE` garde aussi le fuseau horaire.
+
+## Les grands objets : CLOB et BLOB
+- `CLOB` : un texte très long (un contrat, un rapport).
+- `BLOB` : des données binaires (une image, un PDF).
+
+## Et les booléens ?
+> Oracle 19c n'a pas de type `BOOLEAN` pour les colonnes de table (il n'est apparu qu'en 23ai). On utilise en général `NUMBER(1)` avec 0 ou 1, ou `CHAR(1)` avec 'O' ou 'N', avec une contrainte qui limite les valeurs possibles.
+
+=== QUIZ
+? Quel type utiliser pour une colonne « nom » de longueur variable ?
+- `CHAR(50)`
++ `VARCHAR2(50)`
+- `NUMBER(50)`
+- `CLOB`
+= `VARCHAR2` est le type texte standard. `CHAR` complète avec des espaces et `CLOB` est réservé aux textes très longs.
+
+? Que contient une colonne de type DATE dans Oracle ?
+- Uniquement le jour, le mois et l'année
++ La date et l'heure, à la seconde près
+- La date, l'heure et le fuseau horaire
+- Un nombre de jours depuis 1970
+= Une `DATE` Oracle a toujours une partie heure. Pour les fractions de seconde, il faut un `TIMESTAMP`.
+
+? Quelle est la valeur maximale d'une colonne NUMBER(6,2) ?
+- 999 999
++ 9 999,99
+- 999 999,99
+- 99,999999
+= 6 chiffres au total, dont 2 après la virgule : il en reste 4 avant. Le maximum est donc 9 999,99.
+
+? Comment stocker un indicateur vrai/faux dans une table Oracle 19c ?
+- Avec le type `BOOLEAN`
+- Avec le type `BIT`
++ Avec un `NUMBER(1)` (0/1) ou un `CHAR(1)` ('O'/'N') et une contrainte
+- C'est impossible
+= Le type `BOOLEAN` n'existe pour les colonnes qu'à partir d'Oracle 23ai. En 19c, on utilise un petit nombre ou un caractère.
+
+? Pourquoi écrire VARCHAR2(50 CHAR) plutôt que VARCHAR2(50) ?
+- Pour que la colonne accepte aussi des nombres
+- Pour aller plus vite
++ Pour que la limite compte des caractères et non des octets
+- Pour interdire les accents
+= Avec un jeu de caractères comme AL32UTF8, une lettre accentuée prend plusieurs octets. `50 CHAR` garantit 50 caractères.

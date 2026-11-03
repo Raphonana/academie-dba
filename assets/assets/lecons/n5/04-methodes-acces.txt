@@ -1,0 +1,68 @@
+# Les méthodes d'accès
+@duree 8
+@resume Parcours complet, accès par index, par ROWID : quand chaque méthode est la bonne.
+
+## Le parcours complet de table
+`TABLE ACCESS FULL` lit **tous** les blocs de la table jusqu'à la ligne des hautes eaux, par lectures de plusieurs blocs. Ce n'est **pas** toujours mauvais :
+- pour une petite table, c'est la méthode la plus rapide ;
+- pour une requête qui ramène une grande partie de la table (un rapport, un total), c'est bien plus efficace que des millions d'accès par index.
+Il devient un problème quand il est utilisé pour trouver **quelques lignes** dans une **grosse** table.
+
+## Les accès par index
+- `INDEX UNIQUE SCAN` : une seule entrée, par une clé unique (clé primaire). Le plus rapide ;
+- `INDEX RANGE SCAN` : une plage d'entrées (`BETWEEN`, `>`, ou un index non unique) ;
+- `INDEX FULL SCAN` : tout l'index, dans l'ordre (évite un tri) ;
+- `INDEX FAST FULL SCAN` : tout l'index, sans ordre, par lectures multiblocs : comme un parcours complet, mais sur l'index, plus petit que la table ;
+- `INDEX SKIP SCAN` : utilise un index composé sans sa première colonne, quand celle-ci a peu de valeurs différentes.
+
+## L'accès par ROWID
+Chaque ligne a une adresse physique, le **ROWID** (fichier, bloc, position). L'index donne les ROWID, puis `TABLE ACCESS BY INDEX ROWID` va chercher chaque ligne dans la table. C'est l'étape la plus coûteuse quand il y a beaucoup de lignes : un accès disque par ligne, dans le pire des cas.
+> Si toutes les colonnes demandées sont dans l'index, Oracle ne va même pas lire la table : c'est un index **couvrant**.
+
+## Le seuil de bascule
+À partir de quelle proportion de lignes un parcours complet devient-il meilleur qu'un index ? Cela dépend de la taille des lignes et de la façon dont les données sont rangées (le *clustering factor*), mais l'ordre de grandeur est faible : souvent **quelques pour cent**. Un index qui ramène 40 % d'une table est presque toujours plus lent qu'un parcours complet.
+! « Il y a un FULL SCAN dans le plan, c'est forcément mauvais » est une idée reçue. La seule question est : combien de lignes cette étape doit-elle ramener, et combien en ramène-t-elle réellement ?
+
+=== EXERCICES
+?? Affichez le nombre de lignes et de blocs de la table LIGNES_VENTES selon ses statistiques.
+>> SELECT num_rows, blocks FROM dba_tab_statistics WHERE owner = 'APP_VENTES' AND table_name = 'LIGNES_VENTES'
+
+?? La requête g0bggfqrddc4w a ramené en moyenne combien de lignes par exécution, et lu combien de blocs en mémoire (buffer gets) par exécution ? Affichez les deux, arrondis.
+>> SELECT ROUND(rows_processed / executions) AS lignes, ROUND(buffer_gets / executions) AS blocs FROM v$sql WHERE sql_id = 'g0bggfqrddc4w'
+~ Plus de 2 millions de blocs lus pour ramener 120 lignes : c'est la signature d'un parcours complet inutile.
+
+=== QUIZ
+? Un parcours complet de table est-il toujours mauvais ?
+- Oui
++ Non : pour une petite table ou une grande partie des lignes, c'est souvent le meilleur choix
+- Oui, sauf la nuit
+- Non, c'est toujours le meilleur choix
+= Il devient un problème quand il sert à trouver quelques lignes dans une grosse table.
+
+? Quelle méthode utilise une clé primaire pour trouver une ligne ?
++ INDEX UNIQUE SCAN
+- INDEX FAST FULL SCAN
+- TABLE ACCESS FULL
+- INDEX SKIP SCAN
+= Une seule entrée d'index, puis un seul accès à la table.
+
+? Qu'est-ce qu'un ROWID ?
+- Un numéro de ligne dans le résultat
++ L'adresse physique d'une ligne : fichier, bloc et position
+- La clé primaire
+- Un numéro de séquence
+= C'est ce que l'index stocke pour retrouver chaque ligne.
+
+? Qu'appelle-t-on un index couvrant ?
+- Un index sur toutes les colonnes de la table
++ Un index qui contient toutes les colonnes dont la requête a besoin, ce qui évite de lire la table
+- Un index sur une table partitionnée
+- Un index unique
+= Oracle répond à la requête avec le seul index.
+
+? Une requête ramène 40 % d'une grosse table par un index. Est-ce efficace ?
+- Oui, un index est toujours plus rapide
++ Non : un parcours complet serait presque certainement plus rapide
+- Oui, si l'index est unique
+- Cela n'a pas d'importance
+= Des millions d'accès ligne par ligne coûtent plus cher qu'une lecture complète par gros blocs.

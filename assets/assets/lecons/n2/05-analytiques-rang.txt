@@ -1,0 +1,94 @@
+# Fonctions analytiques : les classements
+@duree 9
+@resume ROW_NUMBER, RANK, DENSE_RANK, PARTITION BY et le top N par groupe.
+
+## Calculer sans regrouper
+Avec `GROUP BY`, les lignes d'un groupe sont fusionnées en une seule. Les **fonctions analytiques** (ou fonctions de fenêtrage) calculent elles aussi sur un ensemble de lignes, mais **gardent chaque ligne**. On les reconnaît au mot `OVER` :
+```sql
+SELECT nom, salaire,
+       RANK() OVER (ORDER BY salaire DESC) AS rang
+FROM   employes;
+```
+Chaque employé garde sa ligne, et reçoit son rang : MBARGA 1, NGO 2, ATANGA 3, FOTSO 4, BELLO 5.
+
+## ROW_NUMBER, RANK, DENSE_RANK
+Les trois numérotent les lignes dans l'ordre de `ORDER BY`. Ils ne diffèrent qu'en cas d'**ex aequo**. Imaginons trois salaires : 900, 800, 800, 700.
+- `ROW_NUMBER()` : 1, 2, 3, 4. Un numéro unique par ligne, les ex aequo sont départagés arbitrairement ;
+- `RANK()` : 1, 2, 2, 4. Les ex aequo partagent le rang, puis on saute un numéro (comme au sport) ;
+- `DENSE_RANK()` : 1, 2, 2, 3. Les ex aequo partagent le rang, sans trou.
+
+## PARTITION BY : un classement par groupe
+`PARTITION BY` recommence le calcul pour chaque groupe :
+```sql
+SELECT nom, id_service, salaire,
+       ROW_NUMBER() OVER (PARTITION BY id_service ORDER BY salaire DESC) AS rang_service
+FROM   employes;
+```
+NGO est 1re et FOTSO 2e à l'Informatique ; chacun des autres est 1er de son service.
+
+## Le top N par groupe
+Question classique en entretien : « le mieux payé de chaque service ». On calcule le rang dans une sous-requête, puis on filtre :
+```sql
+SELECT nom, id_service
+FROM  (SELECT nom, id_service,
+              ROW_NUMBER() OVER (PARTITION BY id_service ORDER BY salaire DESC) AS rn
+       FROM   employes)
+WHERE  rn = 1;
+```
+! On ne peut pas écrire `WHERE ROW_NUMBER() OVER (…) = 1` : les fonctions analytiques sont calculées **après** le WHERE, le GROUP BY et le HAVING. Oracle répond **ORA-30483: window functions are not allowed here**. D'où la sous-requête.
+> Choisissez `ROW_NUMBER` pour obtenir exactement une ligne par groupe, `RANK` ou `DENSE_RANK` pour garder tous les ex aequo.
+
+=== EXERCICES
+?? Affichez le nom, le salaire et le rang de chaque employé selon son salaire, du plus haut au plus bas, avec `RANK`.
+>> SELECT nom, salaire, RANK() OVER (ORDER BY salaire DESC) AS rang FROM employes
+
+?? Affichez le nom, le numéro de service et le rang de chaque employé dans son service (le mieux payé = 1), avec `ROW_NUMBER`.
+>> SELECT nom, id_service, ROW_NUMBER() OVER (PARTITION BY id_service ORDER BY salaire DESC) AS rang FROM employes
+~ `PARTITION BY id_service ORDER BY salaire DESC`
+
+?? Affichez le nom et le numéro de service de l'employé le mieux payé de chaque service.
+>> SELECT nom, id_service
+>> FROM (SELECT nom, id_service, ROW_NUMBER() OVER (PARTITION BY id_service ORDER BY salaire DESC) AS rn FROM employes)
+>> WHERE rn = 1
+~ Calculez le rang dans une sous-requête du FROM, puis filtrez `WHERE rn = 1`.
+
+?? Affichez le nom et le salaire des deux employés les mieux payés, en utilisant `DENSE_RANK` dans une sous-requête.
+>> SELECT nom, salaire FROM (SELECT nom, salaire, DENSE_RANK() OVER (ORDER BY salaire DESC) AS r FROM employes) WHERE r <= 2
+
+=== QUIZ
+? Quel mot signale une fonction analytique ?
+- GROUP
++ OVER
+- WINDOW
+- RANKING
+= `fonction(…) OVER (…)` : la clause OVER définit la fenêtre de calcul.
+
+? Trois salaires 900, 800, 800. Quels rangs donne RANK() en tri décroissant ?
+- 1, 2, 3
++ 1, 2, 2
+- 1, 1, 2
+- 1, 2, 4
+= Les deux 800 sont ex aequo au 2e rang. Un 4e salaire plus bas serait 4e avec RANK, 3e avec DENSE_RANK.
+
+? Quelle fonction garantit un numéro différent pour chaque ligne ?
++ `ROW_NUMBER()`
+- `RANK()`
+- `DENSE_RANK()`
+- `COUNT(*) OVER ()`
+= ROW_NUMBER départage les ex aequo arbitrairement (selon l'ordre de lecture) : ajoutez une colonne au ORDER BY pour le rendre stable.
+
+? Que fait `PARTITION BY id_service` ?
+- Il trie par service
+- Il regroupe les lignes comme GROUP BY
++ Il recommence le calcul pour chaque service, en gardant toutes les lignes
+- Il supprime les doublons de service
+= Chaque service a son propre classement, et aucune ligne n'est fusionnée.
+
+? Pourquoi cette requête échoue-t-elle ?
+| SELECT nom FROM employes
+| WHERE ROW_NUMBER() OVER (ORDER BY salaire DESC) = 1;
+- ROW_NUMBER n'existe pas dans Oracle
+- Il manque PARTITION BY
++ Les fonctions analytiques sont calculées après le WHERE : ORA-30483
+- Il faut des guillemets autour de 1
+= On calcule le rang dans une sous-requête, puis on filtre dans la requête qui l'entoure.

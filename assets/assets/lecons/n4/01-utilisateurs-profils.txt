@@ -1,0 +1,113 @@
+# Utilisateurs et profils
+@duree 9
+@resume Créer un compte, gérer ses quotas, verrouiller, déverrouiller, et les règles de mot de passe.
+
+## Créer un utilisateur
+```sql
+CREATE USER m_kamga IDENTIFIED BY "Initial#2026"
+  DEFAULT TABLESPACE users
+  TEMPORARY TABLESPACE temp
+  QUOTA 100M ON users
+  PROFILE p_humain
+  PASSWORD EXPIRE;
+
+GRANT CREATE SESSION TO m_kamga;
+```
+- un utilisateur est aussi un **schéma** : les objets qu'il crée lui appartiennent ;
+- le **quota** limite l'espace qu'il peut occuper dans un tablespace. Sans quota (ni privilège UNLIMITED TABLESPACE), il ne peut rien créer qui prenne de la place ;
+- `PASSWORD EXPIRE` oblige à changer le mot de passe à la première connexion ;
+- sans `CREATE SESSION`, le compte existe mais ne peut même pas se connecter.
+
+## L'état d'un compte
+La colonne `ACCOUNT_STATUS` de `DBA_USERS` :
+- `OPEN` : utilisable ;
+- `LOCKED` : verrouillé par un DBA ; `LOCKED(TIMED)` : verrouillé automatiquement après trop d'échecs de connexion, pour une durée limitée ;
+- `EXPIRED` : le mot de passe a expiré, il faut le changer ; `EXPIRED(GRACE)` : il expire bientôt ;
+- `EXPIRED & LOCKED` : les deux à la fois (c'est l'état normal des comptes techniques inutilisés).
+```sql
+ALTER USER j_fotso ACCOUNT UNLOCK;
+ALTER USER a_ngo IDENTIFIED BY "Nouveau#2026" PASSWORD EXPIRE;
+ALTER USER old_batch ACCOUNT LOCK;
+```
+
+## Les profils
+Un **profil** regroupe des règles appliquées aux comptes qui l'utilisent :
+- `FAILED_LOGIN_ATTEMPTS` : nombre d'échecs avant verrouillage ;
+- `PASSWORD_LOCK_TIME` : durée du verrouillage automatique, en jours (`1/24` = une heure) ;
+- `PASSWORD_LIFE_TIME` et `PASSWORD_GRACE_TIME` : durée de vie du mot de passe et délai de grâce ;
+- `PASSWORD_REUSE_MAX`, `PASSWORD_VERIFY_FUNCTION` : réutilisation et complexité.
+> Séparez les profils des **personnes** (expiration, verrouillage) de ceux des **comptes applicatifs**. Un compte applicatif verrouillé ou expiré, c'est toute l'application qui tombe.
+! Ne mettez jamais un mot de passe en clair dans un script laissé sur le serveur, et ne partagez pas les comptes applicatifs avec les personnes : on ne saurait plus qui a fait quoi.
+
+=== EXERCICES
+?? Affichez le nom et l'état des comptes qui ne sont pas `OPEN`.
+>> SELECT username, account_status FROM dba_users WHERE account_status <> 'OPEN'
+
+?? Affichez les règles (ressource et limite) du profil P_HUMAIN.
+>> SELECT resource_name, limit FROM dba_profiles WHERE profile = 'P_HUMAIN'
+
+?? Affichez le nom et la date d'expiration des comptes dont le mot de passe expire avant le 31 décembre 2026.
+>> SELECT username, expiry_date FROM dba_users WHERE expiry_date < DATE '2026-12-31'
+
+?? Affichez le nom des comptes qui utilisent encore le profil DEFAULT, hors SYS et SYSTEM.
+>> SELECT username FROM dba_users WHERE profile = 'DEFAULT' AND username NOT IN ('SYS', 'SYSTEM')
+
+=== INCIDENT
+# « Mon compte est bloqué ! »
+@contexte 7 h 55. Jean FOTSO, du service comptabilité, appelle : « Je n'arrive plus à me connecter à la base, j'ai ORA-28000. J'ai une clôture à finir avant 10 h. »
+?! Que faites-vous d'abord ?
+- Vous déverrouillez son compte tout de suite => Peut-être la bonne décision, mais vous ne savez pas encore pourquoi il est bloqué. Et si ce n'était pas lui qui essayait de se connecter ?
++ Vous regardez l'état du compte dans DBA_USERS => Bon réflexe : on comprend avant d'agir.
+- Vous lui donnez le mot de passe du compte APP_RH pour qu'il avance => Jamais : un compte applicatif partagé avec une personne, c'est la fin de toute traçabilité.
+?! Voici ce que vous trouvez :
+| USERNAME  ACCOUNT_STATUS  LOCK_DATE            PROFILE
+| J_FOTSO   LOCKED(TIMED)   28/10/2026 07:40:12  P_HUMAIN
+|
+| P_HUMAIN : FAILED_LOGIN_ATTEMPTS 5, PASSWORD_LOCK_TIME 1/24
+- Le compte a été verrouillé par un autre DBA => Non : un verrouillage manuel donnerait LOCKED. LOCKED(TIMED) signifie un verrouillage automatique.
++ Il y a eu 5 échecs de connexion, et le compte est verrouillé pour une heure => Exact : le profil verrouille après 5 échecs, pendant 1/24 de jour, soit jusqu'à 8 h 40.
+- Le mot de passe a expiré => Ce serait EXPIRED, pas LOCKED(TIMED).
+?! Jean affirme n'avoir essayé qu'une fois ce matin. D'où peuvent venir les autres échecs ?
++ D'un outil qui a gardé son ancien mot de passe, par exemple SQL Developer sur son poste => C'est le cas le plus fréquent après un changement de mot de passe. Les traces d'audit de connexion indiquent la machine d'origine des échecs : ici PC-COMPTA-07, son propre poste.
+- D'un bug d'Oracle => Très improbable. Cherchez toujours d'abord une cause simple.
+- C'est forcément une attaque, il faut couper le réseau => Possible en théorie, mais l'audit montre son propre poste. Inutile de déclencher une crise.
+?! Que faites-vous ?
+- Vous passez son compte sur un profil sans verrouillage => Vous affaiblissez la sécurité pour toujours, pour régler un problème d'une heure.
++ Vous déverrouillez le compte et vous lui demandez de corriger le mot de passe enregistré dans SQL Developer => `ALTER USER j_fotso ACCOUNT UNLOCK;`. Il se connecte, corrige sa connexion enregistrée, et le compte ne se rebloquera plus.
+- Vous lui donnez le rôle DBA pour qu'il ne soit plus jamais bloqué => Le rôle DBA ne protège pas du verrouillage, et c'est une faille de sécurité énorme.
+
+=== QUIZ
+? Un compte vient d'être créé avec CREATE USER, sans autre GRANT. Peut-il se connecter ?
+- Oui
++ Non : il lui faut au moins le privilège CREATE SESSION
+- Oui, mais en lecture seule
+- Seulement en SYSDBA
+= Un compte sans CREATE SESSION existe, mais toute connexion échoue avec ORA-01045.
+
+? Que signifie LOCKED(TIMED) ?
+- Verrouillé par un DBA
++ Verrouillé automatiquement après trop d'échecs de connexion, pour une durée limitée
+- Mot de passe expiré
+- Compte supprimé
+= La durée vient de PASSWORD_LOCK_TIME dans le profil du compte.
+
+? Que vaut PASSWORD_LOCK_TIME = 1/24 ?
+- 1 jour
++ 1 heure
+- 24 heures
+- 1 minute
+= L'unité est le jour : 1/24 de jour, soit une heure.
+
+? Pourquoi séparer les profils des personnes et des comptes applicatifs ?
+- Pour économiser de la mémoire
++ Parce qu'un compte applicatif verrouillé ou expiré arrête toute l'application
+- Parce que les comptes applicatifs n'ont pas de mot de passe
+- C'est obligatoire depuis la 19c
+= Les personnes doivent changer de mot de passe régulièrement ; l'application, elle, doit continuer à fonctionner.
+
+? Comment obliger un utilisateur à changer son mot de passe à la prochaine connexion ?
+- `ALTER USER x ACCOUNT LOCK;`
++ `ALTER USER x PASSWORD EXPIRE;`
+- `DROP USER x;`
+- `REVOKE CREATE SESSION FROM x;`
+= Le compte passe en EXPIRED : il pourra se connecter, mais devra d'abord choisir un nouveau mot de passe.

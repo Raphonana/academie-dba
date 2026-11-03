@@ -1,0 +1,79 @@
+# Instance et base de données
+@duree 8
+@resume Deux mots que tout le monde confond : la mémoire et les processus d'un côté, les fichiers de l'autre.
+
+## Deux choses différentes
+Dans le langage courant, on dit « la base Oracle ». Pour un DBA, ce sont deux choses distinctes :
+- l'**instance** : de la **mémoire** (la SGA) et des **processus** qui tournent sur le serveur. Elle naît au démarrage et disparaît à l'arrêt ;
+- la **base de données** : des **fichiers** sur disque (fichiers de données, fichiers de contrôle, fichiers redo). Elle existe même quand tout est arrêté.
+L'instance est le moteur, la base est le contenu. Les utilisateurs ne lisent jamais les fichiers directement : ils parlent à l'instance, qui lit et écrit les fichiers pour eux.
+
+## Une instance, une base… en général
+Dans une configuration classique, une instance ouvre une seule base. Avec **RAC** (Real Application Clusters), plusieurs instances sur plusieurs serveurs ouvrent **la même** base, pour la haute disponibilité : nous le verrons au niveau Senior.
+Sur le serveur, la variable d'environnement `ORACLE_SID` indique à quelle instance on veut parler :
+```sql
+$ export ORACLE_SID=PRODCM
+$ sqlplus / as sysdba
+```
+
+## Interroger l'instance et la base
+Deux vues répondent aux premières questions qu'on se pose en arrivant sur un serveur :
+```sql
+SELECT instance_name, host_name, version_full, status, startup_time
+FROM   v$instance;
+
+SELECT name, log_mode, open_mode, database_role
+FROM   v$database;
+```
+> Les vues dont le nom commence par `V$` sont des **vues dynamiques** : elles montrent l'état de l'instance en mémoire, en temps réel.
+
+## La base d'entraînement PRODCM
+À partir de ce niveau, le bac à sable contient le dictionnaire simulé d'une base de production fictive, **PRODCM** : Oracle 19c, sur le serveur `srv-ora-prod01`, avec deux applications (RH et ventes). Vous interrogerez ses vues comme sur un vrai serveur. Elle cache quelques problèmes : à vous de les trouver au fil des leçons.
+
+=== EXERCICES
+?? Affichez le nom de l'instance, le nom du serveur et l'état de l'instance.
+>> SELECT instance_name, host_name, status FROM v$instance
+~ La vue `V$INSTANCE`.
+
+?? Affichez la version complète d'Oracle (avec le numéro de Release Update) et la date de démarrage de l'instance.
+>> SELECT version_full, startup_time FROM v$instance
+
+?? Affichez le nom de la base, son mode d'archivage et son mode d'ouverture.
+>> SELECT name, log_mode, open_mode FROM v$database
+~ La vue `V$DATABASE`.
+
+=== QUIZ
+? Qu'est-ce que l'instance Oracle ?
+- L'ensemble des fichiers de données
++ La mémoire (SGA) et les processus d'arrière-plan
+- Le serveur physique
+- Le schéma SYS
+= L'instance vit en mémoire. La base, elle, est faite de fichiers.
+
+? Le serveur est éteint. Qu'est-ce qui existe encore ?
+- L'instance
++ La base de données, c'est-à-dire ses fichiers
+- La SGA
+- Les sessions
+= Les fichiers restent sur disque ; l'instance sera recréée au prochain démarrage.
+
+? Avec RAC, combien d'instances peuvent ouvrir la même base ?
+- Une seule
++ Plusieurs, une par serveur du cluster
+- Deux au maximum
+- Aucune
+= C'est le principe de RAC : plusieurs instances partagent les mêmes fichiers.
+
+? À quoi sert la variable ORACLE_SID ?
+- À choisir le mot de passe de SYS
++ À désigner l'instance à laquelle on se connecte localement
+- À définir le port du listener
+- À nommer la base dans les sauvegardes
+= Sur un serveur qui héberge plusieurs instances, ORACLE_SID dit laquelle viser.
+
+? Que montrent les vues V$ ?
+- Les données des applications
++ L'état de l'instance en temps réel
+- L'historique des sauvegardes uniquement
+- Les fichiers du système d'exploitation
+= Ce sont les vues dynamiques de performance, alimentées par la mémoire de l'instance et le fichier de contrôle.

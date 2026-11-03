@@ -1,0 +1,91 @@
+# Les licences Oracle
+@duree 9
+@resume Éditions, options, packs, métriques, et ce que surveille un audit Oracle.
+
+## Pourquoi un DBA doit s'y intéresser
+Une commande tapée par curiosité peut coûter très cher : lancer un rapport AWR, créer une table partitionnée ou compresser un index sans la licence correspondante, c'est utiliser une option payante. Lors d'un **audit** d'Oracle, ces usages sont relevés, et l'entreprise doit régulariser, souvent au prix fort. Le DBA est le mieux placé pour éviter ces erreurs.
+
+## Les éditions
+- **Standard Edition 2** (SE2) : limitée aux serveurs de **2 processeurs** (sockets) au plus, et à 16 threads utilisés. Pas d'options, pas de packs, pas de RAC depuis la 19c ;
+- **Enterprise Edition** (EE) : toutes les fonctionnalités de base (Data Guard, Flashback Database, Resource Manager, parallélisme…), et la possibilité d'acheter des **options** et des **packs**.
+
+## Options et packs (Enterprise Edition)
+Quelques exemples parmi les plus courants :
+- **Diagnostics Pack** : AWR, ASH, ADDM ;
+- **Tuning Pack** (exige le Diagnostics Pack) : SQL Tuning Advisor, SQL Profiles, SQL Monitoring ;
+- **Partitioning** ;
+- **Advanced Compression** : compression des tables actives, des index, des sauvegardes RMAN au-delà du niveau de base ;
+- **Advanced Security** : TDE, Data Redaction ;
+- **Real Application Clusters** et **Active Data Guard** ;
+- **Multitenant** : au-delà de 3 PDB par CDB.
+! Désactivez ce que vous n'avez pas acheté. Sans Diagnostics ni Tuning Pack : `ALTER SYSTEM SET control_management_pack_access = 'NONE';`. Sinon, le moindre clic dans Enterprise Manager peut compter comme une utilisation.
+
+## Ce qu'Oracle mesure
+La vue `DBA_FEATURE_USAGE_STATISTICS` enregistre, chaque semaine, l'utilisation de chaque fonctionnalité : nombre d'utilisations détectées, dates de première et dernière utilisation. C'est exactement ce que les scripts d'audit d'Oracle collectent.
+```sql
+SELECT name, detected_usages, currently_used, last_usage_date
+FROM   dba_feature_usage_statistics
+WHERE  detected_usages > 0
+ORDER  BY name;
+```
+> Les métriques de licence (par processeur avec un *core factor*, ou par utilisateur nommé avec un minimum par processeur) et les règles de la **virtualisation** sont complexes : certaines technologies de virtualisation peuvent obliger à licencier tous les serveurs physiques d'un cluster. Pour ces sujets, faites appel à un spécialiste des licences.
+
+=== EXERCICES
+?? Affichez le nom, le nombre d'utilisations et la date de dernière utilisation des fonctionnalités utilisées au moins une fois.
+>> SELECT name, detected_usages, last_usage_date FROM dba_feature_usage_statistics WHERE detected_usages > 0
+
+?? Affichez les fonctionnalités du Diagnostics Pack et du Tuning Pack (AWR Report, ADDM, SQL Tuning Advisor, Real-Time SQL Monitoring) qui ont été utilisées.
+>> SELECT name, detected_usages FROM dba_feature_usage_statistics WHERE name IN ('AWR Report', 'ADDM', 'SQL Tuning Advisor', 'Real-Time SQL Monitoring') AND detected_usages > 0
+
+=== INCIDENT
+# L'annonce d'un audit Oracle
+@contexte Le directeur financier a reçu une lettre d'Oracle annonçant un audit de licences dans six semaines. L'entreprise possède des licences Enterprise Edition pour PRODCM, sans aucune option ni pack. Il vous demande : « Sommes-nous en règle ? »
+?! Par quoi commencez-vous ?
++ Interroger DBA_FEATURE_USAGE_STATISTICS sur chaque base => Sur PRODCM : AWR Report utilisé 14 fois, ADDM 9 fois, SQL Tuning Advisor 3 fois, Real-Time SQL Monitoring 6 fois. Ce sont des fonctions du Diagnostics Pack et du Tuning Pack, non achetés.
+- Désinstaller Enterprise Manager en urgence => L'historique d'utilisation reste dans la base : supprimer un outil n'efface pas ce qui a été fait, et cela ressemble à une tentative de dissimulation.
+- Répondre que tout va bien sans vérifier => Les scripts d'Oracle liront la même vue que vous.
+?! Pouvez-vous supprimer ces traces d'utilisation ?
++ Non, et il ne faut surtout pas essayer => Modifier le dictionnaire ou maquiller les données d'audit est à la fois risqué pour la base et contraire au contrat. La bonne voie est la transparence et la négociation.
+- Oui, avec un DELETE dans le dictionnaire => Toucher au dictionnaire peut rendre la base non supportée, et une manipulation découverte aggraverait fortement la situation.
+?! Que recommandez-vous au directeur ?
++ Faire un état précis des usages, faire appel à un spécialiste des licences, et décider : régulariser les packs utilisés ou démontrer un usage ponctuel => Avec un inventaire honnête et un conseil spécialisé, l'entreprise négocie en connaissance de cause. Selon les besoins réels, acheter le Diagnostics Pack peut d'ailleurs être une bonne décision.
+- Arrêter PRODCM jusqu'à l'audit => L'usage passé reste enregistré : arrêter la production n'efface rien et coûte très cher.
+?! Comment éviter que cela se reproduise ?
++ Mettre control_management_pack_access à NONE sur les bases sans pack, et contrôler chaque trimestre DBA_FEATURE_USAGE_STATISTICS => L'accès aux fonctions payantes non achetées est fermé, et un contrôle régulier détecte tout nouvel usage avant un audit.
+- Interdire Enterprise Manager à tout le monde => Enterprise Manager reste utile pour ses fonctions gratuites ; c'est l'accès aux packs qu'il faut fermer.
+
+=== QUIZ
+? Combien de processeurs (sockets) au maximum pour un serveur en Standard Edition 2 ?
+- 1
++ 2
+- 4
+- Illimité
+= SE2 est aussi limitée à 16 threads utilisés par la base.
+
+? À quel pack appartiennent AWR et ASH ?
++ Diagnostics Pack
+- Tuning Pack
+- Advanced Security
+- Multitenant
+= Le Tuning Pack exige le Diagnostics Pack.
+
+? Quelle vue enregistre l'utilisation des fonctionnalités, et sert aux audits ?
+- V$OPTION
++ DBA_FEATURE_USAGE_STATISTICS
+- V$LICENSE
+- DBA_REGISTRY
+= Elle est mise à jour chaque semaine automatiquement.
+
+? Comment fermer l'accès aux Diagnostics et Tuning Packs non achetés ?
+- En supprimant le tablespace SYSAUX
++ `ALTER SYSTEM SET control_management_pack_access = 'NONE';`
+- En désinstallant Oracle
+- C'est impossible
+= Les fonctions AWR, ASH, ADDM et Tuning Advisor deviennent inaccessibles.
+
+? Data Guard (sans Active Data Guard) est-il payant en Enterprise Edition ?
+- Oui, c'est une option
++ Non, il est inclus dans l'Enterprise Edition
+- Oui, par site
+- Seulement en Maximum Protection
+= C'est l'ouverture de la base de secours pendant l'application du redo qui demande l'option Active Data Guard.

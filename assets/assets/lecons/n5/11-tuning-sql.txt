@@ -1,0 +1,100 @@
+# Optimiser une requête
+@duree 9
+@resume Réécrire, indexer, conseiller, et n'utiliser les hints qu'en dernier recours.
+
+## Trouver la bonne cible
+On n'optimise pas la requête la plus laide, mais celle qui **coûte le plus** au total. Une requête de 50 ms exécutée un million de fois par jour pèse plus lourd qu'un rapport de 10 minutes lancé une fois par mois. Les colonnes de `V$SQL` permettent de classer :
+- `ELAPSED_TIME` : temps total (en microsecondes) ;
+- `BUFFER_GETS` : blocs lus en mémoire, la meilleure mesure du travail fait ;
+- `DISK_READS` : blocs lus sur disque ;
+- `EXECUTIONS` et `ROWS_PROCESSED` : pour ramener tout cela à une exécution, ou à une ligne.
+> Un bon indicateur : les **blocs lus par ligne ramenée**. Quelques blocs par ligne, c'est sain ; des milliers, la requête lit beaucoup trop pour ce qu'elle rend.
+
+## Les corrections, de la meilleure à la pire
+- **Réécrire** la requête : supprimer une fonction sur une colonne indexée, une conversion implicite, un `SELECT *` inutile, une sous-requête répétée, un traitement ligne à ligne remplaçable par un seul ordre SQL ;
+- **corriger les statistiques** : c'est souvent tout ce qu'il faut ;
+- **ajouter ou adapter un index**, en mesurant son coût sur les écritures ;
+- **le SQL Tuning Advisor** analyse une requête et propose index, statistiques, réécritures ou un **SQL Profile** (des corrections d'estimations attachées à la requête) ;
+- **les hints**, en dernier recours.
+```sql
+-- SQL Tuning Advisor (Tuning Pack, option payante)
+DECLARE t VARCHAR2(64);
+BEGIN
+  t := DBMS_SQLTUNE.CREATE_TUNING_TASK(sql_id => 'g0bggfqrddc4w');
+  DBMS_SQLTUNE.EXECUTE_TUNING_TASK(t);
+  DBMS_OUTPUT.PUT_LINE(t);
+END;
+/
+SELECT DBMS_SQLTUNE.REPORT_TUNING_TASK('TASK_4211') FROM dual;
+```
+
+## Les hints
+Un hint est une instruction donnée à l'optimiseur, dans un commentaire spécial :
+```sql
+SELECT /*+ INDEX(l idx_lignes_date) */ ...
+SELECT /*+ FULL(v) PARALLEL(v 4) */ ...
+SELECT /*+ LEADING(v l) USE_NL(l) */ ...
+```
+! Un hint fige un choix pour toujours, même quand les données changent, et il est ignoré **sans message** s'il est mal écrit (une faute de frappe, un mauvais alias). Il ne corrige pas la cause. Préférez corriger les statistiques, ou figer un plan avec une SQL Plan Baseline, qui reste gérable par le DBA sans toucher au code.
+
+=== EXERCICES
+?? Affichez, pour chaque requête qui ramène des lignes, son sql_id et le nombre de blocs lus par ligne ramenée (arrondi), du plus grand au plus petit.
+>> SELECT sql_id, ROUND(buffer_gets / rows_processed) AS blocs_par_ligne FROM v$sql WHERE rows_processed > 0 ORDER BY blocs_par_ligne DESC
+
+?? Affichez les 3 requêtes qui ont lu le plus de blocs sur disque, avec leur sql_id et leur nombre de lectures disque.
+>> SELECT sql_id, disk_reads FROM v$sql ORDER BY disk_reads DESC FETCH FIRST 3 ROWS ONLY
+
+=== INCIDENT
+# Un index inutilisable depuis septembre
+@contexte En analysant les requêtes, vous remarquez que l'index IDX_LIGNES_PRODUIT, sur LIGNES_VENTES, est UNUSABLE. L'écran « ventes par produit » est très lent depuis des semaines, mais personne ne s'en était plaint officiellement.
+?! Comment un index devient-il UNUSABLE ?
++ Après une opération qui déplace les lignes, comme ALTER TABLE … MOVE, sans reconstruire les index => Le 12 septembre, la table a été déplacée pour récupérer de l'espace. Les ROWID ont changé, l'index pointait vers de mauvaises adresses : Oracle l'a marqué inutilisable.
+- Tout seul, avec le temps => Un index ne s'abîme pas en vieillissant : une opération l'a rendu inutilisable.
+- À cause d'un manque de mémoire => La mémoire n'a aucun effet sur l'état d'un index.
+?! Que fait Oracle avec un index UNUSABLE ?
++ Il l'ignore : les requêtes qui en auraient besoin font des parcours complets => Avec SKIP_UNUSABLE_INDEXES à TRUE (par défaut), aucune erreur n'apparaît : les requêtes sont juste beaucoup plus lentes. C'est pour cela que personne ne l'a remarqué.
+- Il le répare automatiquement la nuit => Non, il reste inutilisable jusqu'à ce qu'un DBA le reconstruise.
+- Il lève une erreur à chaque requête => Pas pour un index non unique : Oracle l'ignore en silence.
+?! Comment le réparer sans gêner les caisses ?
++ ALTER INDEX app_ventes.idx_lignes_produit REBUILD ONLINE, en dehors des heures de pointe => La reconstruction en ligne laisse la table disponible en lecture et en écriture. L'écran des ventes par produit retrouve ses performances.
+- DROP INDEX puis CREATE INDEX en pleine journée => Sans ONLINE, la création verrouille la table pendant des dizaines de minutes : les caisses seraient bloquées.
+- Le rendre invisible => Un index inutilisable invisible reste inutilisable : cela ne change rien.
+?! Comment éviter qu'un tel oubli passe inaperçu ?
++ Ajouter les index UNUSABLE aux contrôles du matin, et toujours reconstruire les index après un MOVE (ou utiliser MOVE ONLINE) => Depuis la 12.2, ALTER TABLE … MOVE ONLINE maintient les index au passage. Et une ligne de plus dans la surveillance quotidienne aurait révélé le problème dès le 13 septembre.
+- Ne plus jamais déplacer de table => Le déplacement est parfois nécessaire ; il faut simplement le faire correctement.
+
+=== QUIZ
+? Quelle requête faut-il optimiser en priorité ?
+- La plus longue à lire
++ Celle qui coûte le plus au total, en tenant compte du nombre d'exécutions
+- La plus récente
+- Celle qui contient le plus de jointures
+= Une petite requête exécutée un million de fois peut peser plus lourd qu'un gros rapport.
+
+? Quelle mesure reflète le mieux le travail fait par une requête ?
+- Le nombre de caractères de son texte
++ Le nombre de blocs lus en mémoire (BUFFER_GETS)
+- Son coût dans le plan
+- Le nombre de colonnes
+= Rapporté au nombre de lignes ramenées, il dit si la requête travaille trop.
+
+? Qu'est-ce qu'un SQL Profile ?
++ Des corrections d'estimations attachées à une requête, proposées par le SQL Tuning Advisor
+- Un compte utilisateur
+- Un index spécial
+- Une vue
+= Il aide l'optimiseur à mieux estimer, sans modifier le code de l'application.
+
+? Que se passe-t-il si un hint contient une faute de frappe ?
+- Oracle lève une erreur
++ Oracle l'ignore sans aucun message
+- La requête échoue
+- Oracle corrige la faute
+= C'est l'un des dangers des hints : on croit avoir forcé un plan, et rien ne se passe.
+
+? Pourquoi les hints sont-ils un dernier recours ?
+- Ils sont payants
++ Ils figent un choix même quand les données changent, et ne corrigent pas la cause
+- Ils ralentissent toujours la requête
+- Ils ne fonctionnent pas en 19c
+= Statistiques justes et SQL Plan Baselines sont plus sûrs et plus faciles à gérer.

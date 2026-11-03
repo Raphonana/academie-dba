@@ -1,0 +1,104 @@
+# Les archives et la zone de récupération
+@duree 9
+@resume La FRA, ORA-00257, et pourquoi on ne supprime jamais une archive à la main.
+
+## La zone de récupération rapide
+La **FRA** (Fast Recovery Area) est un répertoire (ou un groupe ASM) où Oracle range tout ce qui sert à la récupération : archives, sauvegardes RMAN, copies du fichier de contrôle, journaux de flashback. Deux paramètres :
+- `DB_RECOVERY_FILE_DEST` : l'emplacement, par exemple `/u03/fra` ;
+- `DB_RECOVERY_FILE_DEST_SIZE` : la taille **maximale** qu'Oracle s'autorise à y utiliser.
+Oracle gère seul la FRA : quand elle approche de la limite, il supprime les fichiers devenus **inutiles** (obsolètes selon la politique de rétention RMAN, ou archives déjà sauvegardées). C'est la colonne `SPACE_RECLAIMABLE`.
+
+## Quand la FRA est pleine
+Si la FRA est pleine et qu'aucun fichier n'est récupérable, ARCn ne peut plus archiver. Les fichiers redo ne peuvent plus être réutilisés, et **toute la base se fige** : chaque COMMIT attend. Les nouvelles connexions reçoivent :
+```sql
+ORA-00257: Archiver error. Connect AS SYSDBA only until resolved.
+```
+L'alert log montre en général auparavant :
+```sql
+ORA-19815: WARNING: db_recovery_file_dest_size of 107374182400 bytes is 97.00% used
+ORA-19809: limit exceeded for recovery files
+```
+Les causes les plus fréquentes : des sauvegardes qui échouent (les archives ne sont jamais sauvegardées, donc jamais supprimables), un traitement exceptionnel qui génère beaucoup de redo, ou une FRA trop petite.
+
+## Libérer de la place, proprement
+```sql
+-- Si le disque a de la place : élargir la limite (effet immédiat)
+ALTER SYSTEM SET db_recovery_file_dest_size = 150G SCOPE = BOTH;
+
+-- Sauvegarder les archives puis les supprimer
+RMAN> BACKUP ARCHIVELOG ALL DELETE INPUT;
+
+-- Supprimer ce qui est obsolète selon la politique de rétention
+RMAN> DELETE OBSOLETE;
+```
+! Ne supprimez **jamais** des archives avec `rm` : RMAN et le fichier de contrôle continuent de croire qu'elles existent, et surtout, vous perdez peut-être la seule copie d'un redo nécessaire pour restaurer. Si c'est déjà fait : `CROSSCHECK ARCHIVELOG ALL;` puis `DELETE EXPIRED ARCHIVELOG ALL;`, et une **sauvegarde complète** sans attendre.
+
+=== EXERCICES
+?? Affichez l'emplacement de la FRA, sa limite et l'espace utilisé, en Go.
+>> SELECT name, space_limit / 1073741824 AS limite_go, space_used / 1073741824 AS utilise_go FROM v$recovery_file_dest
+
+?? Affichez le pourcentage d'occupation de la FRA, arrondi à l'unité.
+>> SELECT ROUND(100 * space_used / space_limit) AS pct FROM v$recovery_file_dest
+
+?? Affichez l'espace réellement occupé par la FRA une fois retiré ce qu'Oracle peut récupérer, en pourcentage de la limite, arrondi.
+>> SELECT ROUND(100 * (space_used - space_reclaimable) / space_limit) AS pct_reel FROM v$recovery_file_dest
+~ `space_used - space_reclaimable`.
+
+=== INCIDENT
+# Plus personne ne peut valider
+@contexte 9 h 20. Toutes les applications sont figées. Les nouvelles connexions renvoient : ORA-00257: Archiver error. Connect AS SYSDBA only until resolved.
+?! Vous vous connectez en SYSDBA. Que regardez-vous ?
++ L'alert log et l'occupation de la FRA => L'alert log montre ORA-19809 : la FRA est pleine. V$RECOVERY_FILE_DEST indique 97 Go utilisés sur 100, dont seulement 3 Go récupérables.
+- Les sessions bloquées par des verrous => Les sessions attendent bien, mais à cause de l'archivage, pas d'un verrou entre utilisateurs.
+- Le tablespace APP_DATA => Il est plein lui aussi, mais il n'empêcherait pas les COMMIT de tout le monde.
+?! Quelle action débloque la base le plus vite, sans risque ?
+- Supprimer les vieilles archives avec rm sur /u03/fra => Les archives sont peut-être les seules copies de redo non sauvegardées : vous rendez la restauration impossible au-delà de la dernière sauvegarde, et RMAN ne sait plus où il en est.
++ Élargir temporairement la FRA, le disque /u03 ayant 60 Go libres => `ALTER SYSTEM SET db_recovery_file_dest_size = 130G SCOPE = BOTH;` : l'archiveur repart en quelques secondes, les applications aussi.
+- Redémarrer la base => Au redémarrage, la FRA est toujours pleine : la base se fige de nouveau, et vous avez coupé tout le monde pour rien.
+?! La base fonctionne. Pourquoi la FRA s'est-elle remplie ?
+| SELECT start_time, input_type, status FROM v$rman_backup_job_details ORDER BY start_time;
+| ...
+| 27/10/2026 01:00:03  DB INCR     FAILED
+| 27/10/2026 13:00:01  ARCHIVELOG  COMPLETED
+| 28/10/2026 01:00:02  DB INCR     FAILED
++ Les sauvegardes de la base échouent depuis deux nuits, donc rien ne devient obsolète => Sans sauvegarde réussie, Oracle ne peut considérer aucune archive comme supprimable. La FRA ne fait que grossir.
+- La FRA est trop petite par nature => Elle a fonctionné pendant des mois avec 100 Go : le vrai changement, ce sont les sauvegardes en échec.
+?! Que faites-vous maintenant ?
++ Lancer tout de suite une sauvegarde de la base et des archives avec DELETE INPUT, puis analyser l'échec des nuits précédentes => La sauvegarde libère la place, et surtout vous retrouvez une base protégée. Ensuite, vous lisez le journal RMAN de la nuit pour corriger la vraie cause.
+- Laisser la FRA à 130 Go et passer à autre chose => Elle se remplira de nouveau, et deux nuits sans sauvegarde, c'est un risque grave de perte de données.
+
+=== QUIZ
+? Que contient la FRA ?
+- Les fichiers de données
++ Les archives, les sauvegardes RMAN, des copies de fichiers de contrôle et les journaux de flashback
+- Les fichiers temporaires
+- L'alert log
+= C'est la zone de tout ce qui sert à récupérer la base.
+
+? Que se passe-t-il quand ARCn ne peut plus archiver ?
+- Rien, Oracle écrase les fichiers redo
++ La base se fige : les fichiers redo ne peuvent plus être réutilisés
+- Oracle passe en NOARCHIVELOG
+- La base s'arrête proprement
+= En ARCHIVELOG, un fichier redo doit être archivé avant d'être réutilisé.
+
+? Que représente SPACE_RECLAIMABLE ?
++ L'espace qu'Oracle peut libérer seul, car les fichiers sont devenus inutiles
+- L'espace libre sur le disque
+- L'espace des fichiers corrompus
+- L'espace réservé aux sauvegardes futures
+= Archives déjà sauvegardées, sauvegardes obsolètes… Oracle les supprime quand il a besoin de place.
+
+? Quelqu'un a supprimé des archives avec rm. Que faites-vous ?
+- Rien
++ CROSSCHECK ARCHIVELOG ALL, DELETE EXPIRED, puis une sauvegarde complète tout de suite
+- Un redémarrage
+- Une restauration de la base
+= Il y a un trou dans la chaîne des redo : seule une nouvelle sauvegarde complète vous protège de nouveau.
+
+? Quelle commande RMAN sauvegarde les archives puis les supprime du disque ?
+- `DELETE ARCHIVELOG ALL;`
++ `BACKUP ARCHIVELOG ALL DELETE INPUT;`
+- `CROSSCHECK ARCHIVELOG ALL;`
+- `RESTORE ARCHIVELOG ALL;`
+= Les archives ne sont supprimées qu'une fois sauvegardées.

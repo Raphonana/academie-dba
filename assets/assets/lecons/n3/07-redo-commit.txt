@@ -1,0 +1,78 @@
+# Le redo et la vie d'un COMMIT
+@duree 10
+@resume Groupes et membres, bascules, points de contrôle, et le mode ARCHIVELOG.
+
+## Ce qui se passe lors d'un UPDATE puis d'un COMMIT
+- **1.** Votre session modifie le bloc dans le **buffer cache**, et écrit l'ancienne valeur dans l'**undo** ;
+- **2.** elle décrit la modification (le « vecteur de changement ») dans le **redo log buffer** ;
+- **3.** au `COMMIT`, **LGWR** écrit le redo log buffer dans le fichier redo courant. Dès que c'est écrit sur disque, Oracle vous répond « Validation effectuée » ;
+- **4.** plus tard, **DBWn** écrira le bloc modifié dans le fichier de données.
+
+Si le serveur tombe entre les étapes 3 et 4, la modification n'est pas perdue : au redémarrage, SMON la **rejoue** depuis le redo.
+> Un COMMIT est donc rapide mais pas gratuit : il attend une écriture disque. Valider ligne par ligne dans une boucle de 100 000 lignes fait 100 000 attentes « log file sync ».
+
+## Groupes, membres, bascules
+Les fichiers redo sont organisés en **groupes** (au moins deux, en pratique trois ou plus) utilisés à tour de rôle. Chaque groupe a plusieurs **membres**, des copies identiques sur des disques différents.
+- Quand le groupe courant est plein, Oracle passe au suivant : c'est une **bascule** (log switch) ;
+- en mode ARCHIVELOG, le groupe plein est copié par ARCn dans les archives avant de pouvoir être réutilisé ;
+- chaque bascule déclenche un **point de contrôle** (checkpoint) : DBWn écrit les blocs modifiés couverts par ce redo.
+Le statut d'un groupe dans `V$LOG` : `CURRENT` (en cours d'écriture), `ACTIVE` (encore nécessaire en cas de récupération), `INACTIVE` (réutilisable), `UNUSED` (jamais utilisé).
+! Si Oracle veut réutiliser un groupe encore ACTIVE, ou pas encore archivé, toute la base attend. L'alert log affiche « Checkpoint not complete » ou « All online logs need archiving ». Les fichiers redo sont alors trop petits, ou l'archivage est bloqué.
+> Règle d'usage : dimensionner les redo pour environ **quatre à cinq bascules par heure** au plus fort de l'activité.
+
+## Le mode ARCHIVELOG
+- **NOARCHIVELOG** : les fichiers redo sont écrasés sans copie. On ne peut restaurer que la dernière sauvegarde à froid, et tout ce qui a suivi est perdu ;
+- **ARCHIVELOG** : chaque fichier redo est archivé. On peut faire des sauvegardes **à chaud** (base ouverte) et restaurer jusqu'à la dernière transaction, ou jusqu'à une heure précise.
+Une base de production est toujours en ARCHIVELOG. Activer le mode demande un redémarrage en MOUNT :
+```sql
+SHUTDOWN IMMEDIATE
+STARTUP MOUNT
+ALTER DATABASE ARCHIVELOG;
+ALTER DATABASE OPEN;
+```
+
+=== EXERCICES
+?? Affichez le numéro du groupe redo courant et son numéro de séquence.
+>> SELECT group#, sequence# FROM v$log WHERE status = 'CURRENT'
+
+?? Affichez chaque groupe redo avec sa taille en Mo, son nombre de membres et son statut.
+>> SELECT group#, bytes / 1048576 AS mo, members, status FROM v$log
+
+?? Affichez les membres (chemins des fichiers) du groupe redo 1.
+>> SELECT member FROM v$logfile WHERE group# = 1
+
+=== QUIZ
+? Au moment du COMMIT, qu'est-ce qui est écrit sur disque avant qu'Oracle réponde ?
+- Les blocs de données modifiés
++ Le redo de la transaction
+- L'undo
+- Le fichier de contrôle
+= C'est l'écriture du redo par LGWR qui rend le COMMIT définitif.
+
+? Que contient un groupe redo multiplexé ?
+- Plusieurs fichiers différents utilisés à tour de rôle
++ Plusieurs copies identiques du même journal, sur des disques différents
+- Le redo et l'undo
+- Les archives
+= Les groupes tournent ; les membres d'un même groupe sont des copies.
+
+? Que signifie le statut ACTIVE dans V$LOG ?
+- Le groupe est en cours d'écriture
++ Le groupe n'est plus courant, mais encore nécessaire pour une récupération d'instance
+- Le groupe est corrompu
+- Le groupe est archivé et réutilisable
+= Il le restera jusqu'à la fin du point de contrôle correspondant.
+
+? L'alert log affiche souvent « Checkpoint not complete ». Que faut-il envisager ?
+- Désactiver l'archivage
++ Agrandir les fichiers redo ou ajouter des groupes
+- Augmenter la PGA
+- Redémarrer la base
+= Oracle veut réutiliser un groupe encore actif : les redo sont trop petits pour le rythme des modifications.
+
+? Pourquoi une base de production doit-elle être en ARCHIVELOG ?
+- Pour aller plus vite
++ Pour faire des sauvegardes à chaud et restaurer jusqu'à la dernière transaction
+- Pour réduire la taille des sauvegardes
+- C'est obligatoire depuis la 19c
+= En NOARCHIVELOG, toutes les modifications faites depuis la dernière sauvegarde sont perdues en cas de restauration.

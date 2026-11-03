@@ -1,0 +1,85 @@
+# Variables de liaison et analyse des requêtes
+@duree 8
+@resume Hard parse, soft parse, CURSOR_SHARING et la shared pool qui étouffe.
+
+## Le coût de l'analyse
+Avant d'exécuter une requête, Oracle doit l'**analyser** (parse) :
+- vérifier la syntaxe et les droits ;
+- chercher si la même requête existe déjà dans la shared pool ;
+- si non, choisir un plan d'exécution : c'est le **hard parse**, coûteux en CPU et qui verrouille des structures partagées ;
+- si oui, réutiliser le plan existant : c'est le **soft parse**, bien moins cher.
+Oracle reconnaît une requête « déjà vue » à son **texte exact** (son sql_id).
+
+## Le problème des littéraux
+```sql
+SELECT * FROM ventes WHERE id_vente = 98231;
+SELECT * FROM ventes WHERE id_vente = 98232;
+SELECT * FROM ventes WHERE id_vente = 98233;
+```
+Pour Oracle, ce sont trois requêtes **différentes** : trois sql_id, trois hard parse, trois entrées dans la shared pool. Avec des milliers d'exécutions par minute, la shared pool se remplit et se fragmente, le CPU s'envole, les sessions attendent sur `latch: shared pool` ou `library cache: mutex X`, jusqu'à **ORA-04031**.
+La solution, c'est la **variable de liaison** :
+```sql
+SELECT * FROM ventes WHERE id_vente = :id;
+```
+Un seul sql_id, un seul hard parse, puis des soft parses. Et en bonus, l'application est protégée contre l'injection SQL.
+
+## CURSOR_SHARING
+Quand on ne peut pas modifier une application, le paramètre `CURSOR_SHARING = FORCE` demande à Oracle de remplacer lui-même les littéraux par des variables système (`:"SYS_B_0"`).
+! C'est une **rustine** : elle peut changer des plans (tous les littéraux deviennent des variables, avec le bind peeking qui va avec) et ne s'applique pas à tout. On l'active de préférence au niveau d'une session ou d'un module, en attendant que l'application soit corrigée.
+
+## Repérer les requêtes sans variables
+Les requêtes qui ne diffèrent que par leurs littéraux ont le même plan, et souvent le même début de texte :
+```sql
+SELECT SUBSTR(sql_text, 1, 40), COUNT(*)
+FROM   v$sql
+GROUP  BY SUBSTR(sql_text, 1, 40)
+HAVING COUNT(*) > 1
+ORDER  BY 2 DESC;
+```
+La colonne `FORCE_MATCHING_SIGNATURE` de `V$SQL` est encore plus précise : elle est identique pour toutes les requêtes qui ne diffèrent que par leurs littéraux.
+
+=== EXERCICES
+?? Affichez le module et le nombre de requêtes exécutées une seule fois (executions = 1), par module.
+>> SELECT module, COUNT(*) FROM v$sql WHERE executions = 1 GROUP BY module
+
+?? Affichez les 30 premiers caractères du texte et le nombre de requêtes, pour les débuts de texte partagés par plus d'une requête.
+>> SELECT SUBSTR(sql_text, 1, 30), COUNT(*) FROM v$sql GROUP BY SUBSTR(sql_text, 1, 30) HAVING COUNT(*) > 1
+
+?? Affichez la valeur du paramètre `cursor_sharing`.
+>> SELECT value FROM v$parameter WHERE name = 'cursor_sharing'
+
+=== QUIZ
+? Qu'est-ce qu'un hard parse ?
++ L'analyse complète d'une requête jamais vue, avec le choix d'un plan
+- La lecture d'un bloc sur disque
+- Une requête qui échoue
+- L'exécution d'un PL/SQL
+= Le soft parse réutilise un plan déjà présent dans la shared pool.
+
+? Pourquoi `WHERE id = 1`, `WHERE id = 2`, `WHERE id = 3` sont-elles un problème ?
+- Elles renvoient trop de lignes
++ Ce sont trois requêtes différentes pour Oracle : trois hard parse et trois entrées dans la shared pool
+- Elles verrouillent la table
+- Elles sont interdites
+= Avec une variable de liaison, une seule requête est analysée, puis réutilisée.
+
+? Quelle erreur peut provoquer une application qui n'utilise jamais de variables de liaison ?
+- ORA-01555
++ ORA-04031
+- ORA-01653
+- ORA-00060
+= La shared pool se remplit de requêtes uniques et se fragmente.
+
+? Que fait CURSOR_SHARING = FORCE ?
+- Il interdit les requêtes avec des littéraux
++ Il remplace les littéraux par des variables système pour partager les requêtes
+- Il force l'utilisation des index
+- Il vide la shared pool
+= C'est une rustine utile, mais qui peut changer des plans.
+
+? En plus des performances, quel est l'autre grand avantage des variables de liaison ?
++ La protection contre l'injection SQL
+- La compression des données
+- Des sauvegardes plus rapides
+- Moins de redo
+= La valeur n'est jamais interprétée comme du code SQL.

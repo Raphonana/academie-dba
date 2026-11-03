@@ -1,0 +1,102 @@
+# Statistiques, histogrammes et plans qui changent
+@duree 10
+@resume Pourquoi un plan change du jour au lendemain, et comment le stabiliser.
+
+## Ce que l'optimiseur sait
+L'optimiseur ne lit pas les données pour décider : il se fie aux **statistiques**. Le nombre de lignes et de blocs de chaque table, le nombre de valeurs distinctes et de NULL de chaque colonne, la profondeur des index… À partir de là, il estime combien de lignes chaque étape ramènera : la **cardinalité**. Une cardinalité fausse donne un mauvais plan.
+
+## Les histogrammes
+Par défaut, l'optimiseur suppose que les valeurs sont **réparties uniformément**. Si la colonne `statut` a 3 valeurs, il estime qu'un tiers des lignes a le statut 'ANNULE'. Si en réalité 99 % des lignes sont 'PAYE' et 0,1 % 'ANNULE', son estimation est fausse. Un **histogramme** décrit la vraie répartition. `DBMS_STATS` les crée automatiquement sur les colonnes utilisées dans les filtres et dont les valeurs sont déséquilibrées.
+
+## Les variables de liaison et le « bind peeking »
+Avec `WHERE statut = :s`, la valeur n'est pas connue à l'analyse. Oracle regarde (*peeks*) la valeur de la **première** exécution pour choisir le plan, puis réutilise ce plan. Si la première exécution cherchait 'ANNULE' (peu de lignes, index), toutes les suivantes cherchant 'PAYE' utiliseront aussi l'index… très lentement.
+L'**adaptive cursor sharing** (depuis la 11g) détecte ces cas et crée plusieurs plans selon les valeurs, mais pas toujours immédiatement.
+
+## Pourquoi un plan change du jour au lendemain
+- de **nouvelles statistiques** ont été collectées cette nuit (ou au contraire, elles sont trop vieilles par rapport aux données) ;
+- un **index** a été créé, supprimé, ou est devenu inutilisable ;
+- la requête a été **réanalysée** (shared pool vidée, redémarrage) avec une autre valeur de variable ;
+- un **paramètre** de l'optimiseur a changé, ou une mise à jour d'Oracle.
+
+## Stabiliser
+```sql
+-- Revenir aux statistiques d'hier
+EXEC DBMS_STATS.RESTORE_TABLE_STATS('APP_VENTES', 'LIGNES_VENTES', SYSTIMESTAMP - INTERVAL '1' DAY);
+
+-- Figer un bon plan avec une SQL Plan Baseline (gratuit en Enterprise Edition)
+DECLARE n PLS_INTEGER;
+BEGIN
+  n := DBMS_SPM.LOAD_PLANS_FROM_CURSOR_CACHE(sql_id => 'g0bggfqrddc4w', plan_hash_value => 1290512144);
+END;
+/
+```
+Une **SQL Plan Baseline** oblige l'optimiseur à choisir parmi des plans acceptés : un nouveau plan n'est utilisé qu'après avoir été vérifié.
+! Ne videz pas la shared pool (`ALTER SYSTEM FLUSH SHARED_POOL`) en production pour « forcer un nouveau plan » : toutes les requêtes de toutes les applications doivent alors être réanalysées, et le nouveau plan n'est pas forcément meilleur.
+
+=== EXERCICES
+?? Affichez le nom, le nombre de lignes et la date des statistiques des tables dont les statistiques sont périmées.
+>> SELECT table_name, num_rows, last_analyzed FROM dba_tab_statistics WHERE stale_stats = 'YES'
+
+?? Affichez le propriétaire et le nom des tables qui n'ont jamais eu de statistiques.
+>> SELECT owner, table_name FROM dba_tab_statistics WHERE last_analyzed IS NULL
+
+?? Depuis combien de jours entiers les statistiques de LIGNES_VENTES n'ont-elles pas été recalculées, au 28 octobre 2026 ?
+>> SELECT TRUNC(DATE '2026-10-28' - last_analyzed) AS jours FROM dba_tab_statistics WHERE table_name = 'LIGNES_VENTES'
+
+=== INCIDENT
+# Le plan a changé cette nuit
+@contexte Jeudi, 8 h 30. Le traitement d'export comptable, qui dure 20 minutes depuis des années, tourne depuis 4 h du matin. Rien n'a été livré. Le chef de projet est inquiet.
+?! Que regardez-vous d'abord ?
++ La requête qui tourne, et si son plan a changé par rapport aux jours précédents => Dans l'historique AWR, la requête principale avait le plan_hash_value 3170412233 jusqu'à hier ; ce matin, elle a le plan 1907744521, avec des boucles imbriquées sur 40 millions de lignes.
+- Les sauvegardes de la nuit => Sans rapport avec un plan qui change.
+- La taille de la SGA => Rien n'indique un manque de mémoire : le travail fait a changé, pas les ressources.
+?! Pourquoi le plan a-t-il changé ?
+| TABLE_NAME     LAST_ANALYZED         NUM_ROWS
+| VENTES         27/10/2026 22:14:00   41 200 000
+| LIGNES_VENTES  12/09/2026 23:40:00   141 000 000
++ VENTES vient d'avoir de nouvelles statistiques, LIGNES_VENTES a des statistiques de septembre : les estimations de jointure sont devenues incohérentes => L'optimiseur combine des chiffres récents et des chiffres vieux de six semaines, et se trompe sur le nombre de lignes jointes.
+- Oracle choisit ses plans au hasard => L'optimiseur est déterministe : mêmes statistiques et mêmes paramètres, même plan.
+- Quelqu'un a modifié la requête => Rien n'a été livré, et le texte de la requête (son sql_id) est le même.
+?! Comment débloquez-vous la situation rapidement ?
++ Charger l'ancien bon plan comme SQL Plan Baseline, puis relancer le traitement => Le plan 3170412233 est encore dans l'historique : DBMS_SPM le charge comme plan accepté. Le traitement, relancé, se termine en 22 minutes.
+- Vider la shared pool => Toutes les applications doivent tout réanalyser en pleine matinée, et rien ne garantit que l'optimiseur choisira mieux avec les mêmes statistiques.
+- Redémarrer la base => Même effet que vider la shared pool, avec une coupure de service en plus.
+?! Et sur le fond ?
++ Recalculer les statistiques de LIGNES_VENTES, comprendre pourquoi la collecte automatique la saute, puis vérifier le plan => La table est si grosse que la collecte automatique n'a pas le temps de la traiter dans la fenêtre de nuit. Une collecte planifiée le week-end, en parallèle, règle le problème. La baseline pourra ensuite évoluer vers un meilleur plan, s'il existe.
+- Garder la baseline pour toujours et ne plus y penser => La baseline protège, mais les statistiques de septembre continueront de fausser les autres requêtes sur cette table.
+
+=== QUIZ
+? Sur quoi l'optimiseur s'appuie-t-il pour estimer le nombre de lignes ?
+- Il lit toutes les données à chaque requête
++ Sur les statistiques des tables, des colonnes et des index
+- Sur l'alert log
+- Sur la taille de la SGA
+= Des statistiques fausses donnent des estimations fausses, donc de mauvais plans.
+
+? À quoi sert un histogramme ?
++ À décrire la répartition réelle des valeurs d'une colonne déséquilibrée
+- À tracer un graphique de performance
+- À compresser une colonne
+- À compter les lignes
+= Sans histogramme, l'optimiseur suppose une répartition uniforme.
+
+? Qu'est-ce que le bind peeking ?
+- Une faille de sécurité
++ Oracle regarde la valeur de la variable lors de la première analyse pour choisir le plan
+- Le remplacement des littéraux par des variables
+- La lecture des variables d'une autre session
+= Le plan choisi pour la première valeur est ensuite réutilisé pour les suivantes.
+
+? Que garantit une SQL Plan Baseline ?
+- Que la requête ira toujours plus vite
++ Que l'optimiseur ne choisira qu'un plan déjà accepté
+- Que les statistiques ne changeront plus
+- Que la requête ne sera plus réanalysée
+= Un nouveau plan doit être vérifié avant d'être accepté.
+
+? Pourquoi éviter FLUSH SHARED_POOL en production ?
+- C'est interdit
++ Toutes les requêtes de toutes les applications doivent être réanalysées, sans garantie d'un meilleur plan
+- Cela supprime les données
+- Cela arrête la base
+= C'est une action brutale, dont l'effet sur le plan visé reste incertain.

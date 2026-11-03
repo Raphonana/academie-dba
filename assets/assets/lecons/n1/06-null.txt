@@ -1,0 +1,87 @@
+# La valeur NULL
+@duree 8
+@resume L'absence de valeur, IS NULL, NVL, COALESCE et les pièges classiques.
+
+## NULL veut dire « inconnu »
+Quand une colonne n'a pas de valeur, elle contient **NULL**. Ce n'est ni zéro, ni un espace : c'est « on ne sait pas » ou « sans objet ». Par exemple, Paul MBARGA est le directeur : sa colonne `id_manager` est NULL car il n'a pas de manager.
+Ajoutons à notre table une colonne `prime` : Aïcha NGO a une prime de 100 000, Ibrahim BELLO de 50 000, et les trois autres n'en ont pas (NULL).
+
+## Le grand piège : = NULL ne marche pas
+Toute comparaison avec NULL donne « inconnu », jamais « vrai ». Cette requête ne renvoie **aucune ligne** :
+```sql
+SELECT nom FROM employes
+WHERE  prime = NULL;    -- toujours faux !
+```
+Il faut utiliser `IS NULL` ou `IS NOT NULL` :
+```sql
+SELECT nom FROM employes
+WHERE  prime IS NULL;   -- MBARGA, FOTSO, ATANGA
+```
+! De même, `WHERE prime <> 100000` ne renvoie pas les employés sans prime : comparer NULL à 100 000 donne « inconnu », et la ligne est écartée.
+
+## NULL contamine les calculs
+Une opération avec NULL donne NULL : `salaire + prime` vaut NULL pour Jean FOTSO, alors qu'il a bien un salaire.
+```sql
+SELECT nom, salaire + prime AS total
+FROM   employes;          -- total vide pour 3 employés
+```
+
+## Remplacer NULL : NVL et COALESCE
+`NVL(expr, remplacement)` renvoie `expr`, ou `remplacement` si `expr` est NULL :
+```sql
+SELECT nom, salaire + NVL(prime, 0) AS total
+FROM   employes;
+```
+`COALESCE(a, b, c, …)` renvoie la première valeur non NULL de la liste. C'est la version standard SQL et elle accepte plus de deux arguments.
+> Il existe aussi `NVL2(expr, si_non_null, si_null)` : `NVL2(prime, 'Oui', 'Non')` affiche « Oui » si l'employé a une prime.
+
+## Spécialité Oracle : la chaîne vide
+Dans Oracle, la chaîne vide `''` est traitée comme NULL. `WHERE email = ''` ne trouve donc jamais rien : il faut écrire `WHERE email IS NULL`.
+
+=== QUIZ
+? Que contient une colonne NULL ?
+- La valeur zéro
+- Un espace
++ Aucune valeur : c'est inconnu ou sans objet
+- Le texte 'NULL'
+= NULL représente l'absence de valeur. Ce n'est ni 0, ni une chaîne d'espaces.
+
+? Comment trouver les employés sans prime ?
+- `WHERE prime = NULL`
+- `WHERE prime = 0`
++ `WHERE prime IS NULL`
+- `WHERE prime = ''`
+= Seul `IS NULL` teste correctement l'absence de valeur. `= NULL` est toujours « inconnu », donc jamais vrai.
+
+? Pour Jean FOTSO (salaire 650 000, prime NULL), que vaut `salaire + prime` ?
+- 650 000
+- 0
++ NULL
+- Une erreur ORA-
+= Tout calcul impliquant NULL donne NULL. Utilisez `NVL(prime, 0)` pour obtenir 650 000.
+
+? Que renvoie `COALESCE(NULL, NULL, 'B', 'C')` ?
+- NULL
+- 'C'
++ 'B'
+- Une erreur, COALESCE n'accepte que deux arguments
+= `COALESCE` renvoie la première valeur non NULL de la liste.
+
+? Combien de lignes renvoie `WHERE prime <> 100000` sur notre table ?
++ 1 (Ibrahim BELLO)
+- 4
+- 0
+- 5
+= Seul BELLO (50 000) a une prime différente de 100 000. Les trois employés sans prime sont écartés car la comparaison avec NULL est « inconnue ».
+
+=== EXERCICES
+?? Affichez le nom des employés qui n'ont pas de prime.
+>> SELECT nom FROM employes WHERE prime IS NULL
+~ `= NULL` ne marche jamais : il faut `IS NULL`.
+
+?? Affichez le nom et le revenu total (salaire + prime) de chaque employé, en comptant 0 quand il n'y a pas de prime.
+>> SELECT nom, salaire + NVL(prime, 0) AS total FROM employes
+~ `NVL(prime, 0)` remplace NULL par 0.
+
+?? Affichez le nom des employés qui ont un manager.
+>> SELECT nom FROM employes WHERE id_manager IS NOT NULL

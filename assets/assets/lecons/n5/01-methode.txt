@@ -1,0 +1,73 @@
+# Une méthode pour la performance
+@duree 8
+@resume Mesurer avant d'agir : temps de réponse, DB time, et pourquoi on ne règle pas au hasard.
+
+## « La base est lente »
+C'est la phrase que tout DBA entend chaque semaine. Elle ne veut rien dire tant qu'on n'a pas posé trois questions :
+- **qui** est lent ? Toute l'application, un écran, un traitement de nuit, un seul utilisateur ?
+- **depuis quand** ? Toujours, depuis ce matin, depuis la livraison d'hier ?
+- **combien** ? Une recherche passée de 1 à 30 secondes, un traitement de 2 à 6 heures ?
+Sans réponse chiffrée, impossible de savoir si on a amélioré quoi que ce soit.
+
+## Le temps de réponse
+Le temps qu'une session passe dans la base se décompose en deux parts :
+- le temps **CPU** : Oracle travaille (analyse, lecture de blocs en mémoire, calculs) ;
+- le temps d'**attente** : Oracle attend quelque chose (une lecture disque, un verrou, l'écriture du redo…). Chaque attente porte un nom : c'est un **événement d'attente**.
+La somme, pour toutes les sessions, s'appelle le **DB time**. C'est la mesure de base de toute analyse de performance : on cherche **où passe le DB time**.
+
+## La démarche
+- **1.** Mesurer le problème (le temps de réponse de l'écran ou du traitement concerné) ;
+- **2.** trouver où passe le temps : quelles requêtes, quels événements d'attente ;
+- **3.** comprendre pourquoi (le plan d'exécution, les statistiques, un verrou, un disque saturé) ;
+- **4.** corriger la cause, **une seule chose à la fois** ;
+- **5.** mesurer de nouveau, et comparer.
+! Les « réglages miracles » trouvés sur internet (augmenter la SGA, vider la shared pool, ajouter des index partout, changer des paramètres cachés) ne corrigent presque jamais le vrai problème, et en créent souvent d'autres. On ne règle que ce qu'on a mesuré.
+
+## Où regarder ?
+- **en direct** : `V$SESSION` (que fait chaque session maintenant ?), `V$SQL` (quelles requêtes consomment le plus) ;
+- **sur les dernières minutes** : l'ASH, `V$ACTIVE_SESSION_HISTORY` ;
+- **sur des heures ou des jours** : les rapports AWR.
+Ce niveau vous apprend à utiliser chacun de ces outils sur la base PRODCM, où les caisses se plaignent de lenteurs depuis ce matin.
+
+=== EXERCICES
+?? Affichez le nombre de sessions utilisateur actives (status ACTIVE, type USER) en ce moment.
+>> SELECT COUNT(*) FROM v$session WHERE type = 'USER' AND status = 'ACTIVE'
+
+?? Affichez le numéro, l'utilisateur, l'événement et la classe d'attente des sessions utilisateur actives.
+>> SELECT sid, username, event, wait_class FROM v$session WHERE type = 'USER' AND status = 'ACTIVE'
+
+=== QUIZ
+? Quelles sont les deux composantes du temps passé par une session dans la base ?
++ Le temps CPU et le temps d'attente
+- Le temps réseau et le temps disque
+- Le temps de connexion et le temps de déconnexion
+- Le temps SQL et le temps PL/SQL
+= Chaque attente porte un nom : c'est un événement d'attente.
+
+? Qu'est-ce que le DB time ?
+- Le temps depuis le démarrage de la base
++ La somme du temps CPU et des attentes non inactives de toutes les sessions
+- Le temps d'exécution des sauvegardes
+- La durée moyenne d'une requête
+= C'est la mesure principale de la charge de travail de la base.
+
+? Un utilisateur dit « la base est lente ». Quelle est la première chose à faire ?
+- Augmenter la SGA
+- Redémarrer la base
++ Préciser qui est lent, depuis quand, et de combien
+- Recalculer toutes les statistiques
+= Sans mesure précise, on ne sait ni où chercher, ni si on a amélioré quoi que ce soit.
+
+? Pourquoi ne changer qu'une seule chose à la fois ?
++ Pour savoir laquelle a eu un effet, bon ou mauvais
+- Parce qu'Oracle refuse plusieurs ALTER SYSTEM
+- Pour ne pas redémarrer
+- Ce n'est pas nécessaire
+= Avec trois changements à la fois, impossible de savoir lequel a aidé, et lequel a nui.
+
+? Quel outil donne ce qu'ont fait les sessions actives au cours des dernières minutes ?
+- AWR
++ ASH (V$ACTIVE_SESSION_HISTORY)
+- L'alert log
+- RMAN
+= AWR donne des moyennes sur des heures ; ASH détaille chaque seconde récente.

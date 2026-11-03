@@ -1,0 +1,70 @@
+# Les processus d'arrière-plan
+@duree 9
+@resume DBWn, LGWR, CKPT, SMON, PMON, ARCn, MMON : qui fait quoi dans l'instance.
+
+## Les ouvriers de l'instance
+En plus des processus serveur des sessions, l'instance lance des **processus d'arrière-plan**, chacun avec une mission. Sous Linux, on les voit avec `ps -ef | grep ora_` : ils s'appellent `ora_<nom>_<instance>`, par exemple `ora_lgwr_PRODCM`.
+
+## Les cinq indispensables
+- **DBWn** (Database Writer) : écrit sur disque les blocs modifiés du buffer cache (les blocs « sales »). Il travaille **en différé**, par lots, quand c'est utile : pas à chaque COMMIT ;
+- **LGWR** (Log Writer) : écrit le redo log buffer dans les fichiers redo. Il écrit **à chaque COMMIT**, toutes les 3 secondes, et quand le tampon est rempli au tiers ;
+- **CKPT** (Checkpoint) : lors d'un point de contrôle, met à jour les en-têtes des fichiers de données et le fichier de contrôle, et pousse DBWn à écrire ;
+- **SMON** (System Monitor) : fait la **récupération d'instance** au démarrage après une panne, et nettoie les segments temporaires ;
+- **PMON** (Process Monitor) : fait le ménage quand une session meurt brutalement, annule sa transaction et libère ses verrous.
+> Si l'un de ces processus meurt, l'instance s'arrête aussitôt. C'est voulu : Oracle préfère s'arrêter que risquer d'abîmer les données.
+
+## Quelques autres
+- **ARCn** (Archiver) : copie les fichiers redo remplis vers les archives, en mode ARCHIVELOG ;
+- **LREG** (Listener Registration) : annonce les services de l'instance au listener (c'était le rôle de PMON avant la 12c) ;
+- **MMON** et **MMNL** : prennent les photos de performance de l'AWR et surveillent les seuils d'alerte ;
+- **RECO** : résout les transactions distribuées en suspens ;
+- **CJQ0** et **Jnnn** : lancent les travaux planifiés (DBMS_SCHEDULER).
+
+## Pourquoi DBWn n'écrit pas au COMMIT
+Au COMMIT, Oracle écrit seulement le **redo** (petit, séquentiel, rapide), pas les blocs modifiés (gros, éparpillés). Si l'instance tombe, le redo permet de refaire le travail. C'est le principe du **journal en premier** (write-ahead logging) : il rend les COMMIT rapides sans risquer les données.
+
+=== EXERCICES
+?? Affichez le numéro de session et le programme de tous les processus d'arrière-plan visibles dans `V$SESSION`.
+>> SELECT sid, program FROM v$session WHERE type = 'BACKGROUND'
+
+?? Combien de processus d'arrière-plan y a-t-il dans `V$SESSION` ?
+>> SELECT COUNT(*) FROM v$session WHERE type = 'BACKGROUND'
+
+?? Affichez le programme du processus d'arrière-plan qui attend sur l'événement `Log archive I/O`.
+>> SELECT program FROM v$session WHERE type = 'BACKGROUND' AND event = 'Log archive I/O'
+
+=== QUIZ
+? Quel processus écrit dans les fichiers redo au moment d'un COMMIT ?
+- DBWn
++ LGWR
+- CKPT
+- ARCn
+= Le COMMIT attend que LGWR ait écrit le redo : c'est l'attente « log file sync ».
+
+? DBWn écrit-il les blocs modifiés à chaque COMMIT ?
+- Oui, toujours
++ Non : il écrit en différé, par lots ; le redo suffit à protéger les données validées
+- Oui, mais seulement pour les petites transactions
+- Non, il ne les écrit jamais
+= Grâce au journal écrit en premier, les blocs peuvent attendre.
+
+? Quel processus fait la récupération d'instance après une panne ?
+- PMON
++ SMON
+- LGWR
+- RECO
+= SMON rejoue le redo puis annule les transactions non validées.
+
+? Une session est tuée brutalement côté client. Qui libère ses verrous ?
++ PMON
+- SMON
+- DBWn
+- Le listener
+= PMON détecte le processus mort, annule sa transaction et libère ses ressources.
+
+? Que se passe-t-il si le processus LGWR meurt ?
+- Oracle le relance sans interruption
++ L'instance s'arrête immédiatement
+- Les COMMIT deviennent plus lents
+- Rien, DBWn prend le relais
+= Les processus vitaux arrêtent l'instance s'ils disparaissent, pour protéger les données.

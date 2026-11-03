@@ -1,0 +1,71 @@
+# Premier regard sur le multitenant
+@duree 7
+@resume CDB, PDB, conteneur racine : l'architecture par défaut depuis la 12c.
+
+## Une base qui en contient d'autres
+Depuis la 12c, Oracle propose l'architecture **multitenant** : une **CDB** (Container Database) héberge plusieurs **PDB** (Pluggable Databases).
+- `CDB$ROOT` : le conteneur racine, qui contient le dictionnaire Oracle et les objets communs ;
+- `PDB$SEED` : un modèle en lecture seule, qui sert à créer de nouvelles PDB en quelques secondes ;
+- les **PDB** : chacune se comporte comme une base indépendante pour les applications, avec ses propres tablespaces, utilisateurs et données.
+Toutes les PDB partagent **une seule instance** : la même SGA, les mêmes processus d'arrière-plan, les mêmes fichiers redo et le même undo (sauf en mode undo local, par défaut depuis la 12.2).
+
+## Pourquoi c'est intéressant
+- **Consolidation** : dix petites bases sur un serveur consomment une instance au lieu de dix ;
+- **Mises à jour** : on met à jour la CDB une fois, ou on débranche une PDB pour la rebrancher dans une CDB plus récente (*unplug / plug*) ;
+- **Clonage** : une copie d'une PDB pour un environnement de test, en une commande.
+
+## Ce qui change pour le DBA
+```sql
+SELECT name, cdb FROM v$database;          -- CDB = YES ou NO
+SHOW CON_NAME                               -- le conteneur courant
+ALTER SESSION SET CONTAINER = PDB_RH;       -- changer de conteneur
+SELECT con_id, name, open_mode FROM v$pdbs;
+```
+- les utilisateurs **communs** existent dans tous les conteneurs : leur nom commence par `C##` ;
+- les utilisateurs **locaux** n'existent que dans une PDB ;
+- une application se connecte toujours au **service** de sa PDB, jamais à la racine.
+
+## Et la 19c ?
+! La 19c est **la dernière version** à accepter l'architecture non-CDB, qui est dépréciée depuis la 12.1.0.2. Depuis la 21c, toute base est une CDB. Une base non-CDB en 19c, comme PRODCM, devra être convertie en PDB lors de la prochaine migration.
+> En 19c, on peut créer jusqu'à **3 PDB** (en plus de la racine et de la seed) sans acheter l'option Multitenant.
+Nous détaillerons le multitenant au niveau Senior : création, clonage, plug, unplug et migration d'une non-CDB.
+
+=== EXERCICES
+?? Affichez le nom de la base et la colonne qui indique si c'est une CDB.
+>> SELECT name, cdb FROM v$database
+
+=== QUIZ
+? Que contient une CDB ?
+- Une seule base classique
++ Un conteneur racine, une seed et des PDB
+- Uniquement des sauvegardes
+- Plusieurs instances
+= Les PDB partagent l'instance de la CDB.
+
+? À quoi sert PDB$SEED ?
+- À stocker les mots de passe
++ À servir de modèle pour créer rapidement de nouvelles PDB
+- À héberger les applications
+- À stocker l'undo
+= Elle est en lecture seule.
+
+? Comment reconnaît-on un utilisateur commun ?
+- Il s'appelle SYS
++ Son nom commence par C##
+- Il n'a pas de mot de passe
+- Il est en majuscules
+= Les utilisateurs communs existent dans tous les conteneurs.
+
+? Quelle est la dernière version d'Oracle à accepter les bases non-CDB ?
+- 12.2
++ 19c
+- 21c
+- 23ai
+= Depuis la 21c, toute base est une CDB.
+
+? Combien de PDB peut-on créer en 19c sans l'option Multitenant ?
+- 1
++ 3
+- 10
+- Aucune
+= Au-delà, l'option payante est nécessaire.

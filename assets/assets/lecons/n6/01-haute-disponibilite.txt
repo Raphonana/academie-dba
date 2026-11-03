@@ -1,0 +1,66 @@
+# La haute disponibilité
+@duree 8
+@resume Panne de serveur, de site, erreur humaine : quelle technologie protège de quoi.
+
+## Contre quoi se protège-t-on ?
+Chaque technologie répond à un type de panne précis. Le travail d'un DBA senior est d'associer les bons outils aux bons risques, en fonction du RPO et du RTO exigés :
+- **panne d'un serveur** (carte mère, mémoire, système) : **RAC**, qui fait tourner la base sur plusieurs serveurs à la fois ;
+- **panne d'un disque** : la redondance du stockage, ou **ASM** en miroir ;
+- **perte d'un site entier** (incendie, inondation, coupure longue) : **Data Guard**, une copie de la base tenue à jour dans un autre site ;
+- **corruption de données, erreur humaine** (un DELETE sans WHERE) : les **sauvegardes RMAN** et les technologies **Flashback** ;
+- **interruptions planifiées** (correctifs, migrations) : patching hors place, Data Guard (on bascule, on met à jour, on rebascule), RAC (une instance à la fois).
+! RAC ne protège **pas** contre la perte du site ni contre une erreur humaine : tous les serveurs partagent le même stockage, au même endroit. Data Guard ne remplace **pas** les sauvegardes : une table supprimée l'est aussi sur la base de secours, quelques secondes plus tard.
+
+## L'architecture MAA
+Oracle décrit ses recommandations sous le nom **MAA** (Maximum Availability Architecture), par paliers :
+- **Bronze** : une base, des sauvegardes RMAN, des redémarrages automatiques ;
+- **Argent** : Bronze + RAC (ou un cluster actif-passif) contre les pannes de serveur ;
+- **Or** : Argent + Data Guard dans un autre site ;
+- **Platine** : Or + GoldenGate et des techniques avancées pour un arrêt quasi nul, même pendant les migrations.
+
+## Ce que coûte la disponibilité
+Chaque palier ajoute du matériel, des licences et de la complexité. Une base interne consultée aux heures de bureau n'a pas les mêmes besoins qu'un système de paiement. La bonne question à poser aux responsables : « combien coûte une heure d'arrêt, et combien de données peut-on perdre ? »
+> PRODCM est aujourd'hui au palier Bronze : une seule instance, des sauvegardes (qui échouent depuis deux nuits) et pas de base de secours.
+
+=== EXERCICES
+?? Affichez le rôle de PRODCM, son mode d'archivage et si Flashback Database est activé.
+>> SELECT database_role, log_mode, flashback_on FROM v$database
+
+?? Affichez les fonctions de haute disponibilité suivies par Oracle (RAC et Active Data Guard) et leur nombre d'utilisations.
+>> SELECT name, detected_usages FROM dba_feature_usage_statistics WHERE name LIKE '%Real Application Clusters%' OR name LIKE 'Active Data Guard%'
+
+=== QUIZ
+? Quelle technologie protège contre la perte d'un site entier ?
+- RAC
++ Data Guard
+- ASM
+- Flashback Table
+= La base de secours est dans un autre site, alimentée en continu par le redo.
+
+? RAC protège-t-il contre une erreur humaine (DELETE sans WHERE) ?
+- Oui
++ Non : toutes les instances partagent les mêmes données
+- Oui, si on a trois serveurs
+- Seulement avec ASM
+= Contre l'erreur humaine : Flashback et sauvegardes.
+
+? Data Guard peut-il remplacer les sauvegardes ?
+- Oui, c'est une copie de la base
++ Non : une erreur sur la base principale est rejouée sur la base de secours
+- Oui, en mode Maximum Protection
+- Oui, si la base de secours est ouverte
+= Il protège contre la perte d'un site, pas contre la corruption logique ni l'erreur humaine.
+
+? Que décrit l'architecture MAA d'Oracle ?
++ Des paliers de recommandations pour la haute disponibilité, de Bronze à Platine
+- Un format de sauvegarde
+- Une méthode de tuning
+- Une licence
+= Chaque palier ajoute des protections, et des coûts.
+
+? Quelle est la bonne question à poser avant de choisir une architecture ?
+- Quelle est la dernière technologie à la mode ?
++ Combien coûte une heure d'arrêt, et combien de données peut-on perdre ?
+- Combien de serveurs avons-nous en stock ?
+- Quelle est la version d'Oracle ?
+= Le RTO et le RPO guident le choix, et le budget.

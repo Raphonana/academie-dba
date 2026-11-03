@@ -1,0 +1,105 @@
+# Les triggers
+@duree 10
+@resume Du code déclenché automatiquement : BEFORE / AFTER, :NEW / :OLD, et la table en mutation.
+
+## Le principe
+Un **trigger** (déclencheur) est un bloc PL/SQL qu'Oracle exécute **automatiquement** quand un événement se produit : un INSERT, un UPDATE ou un DELETE sur une table, mais aussi une connexion, un démarrage de la base ou un ordre DDL.
+
+## Trigger de ligne
+```sql
+CREATE OR REPLACE TRIGGER trg_emp_salaire
+BEFORE INSERT OR UPDATE OF salaire ON employes
+FOR EACH ROW
+WHEN (NEW.salaire > 5000000)
+BEGIN
+  RAISE_APPLICATION_ERROR(-20010, 'Salaire anormal pour ' || :NEW.nom);
+END;
+/
+```
+- `BEFORE` ou `AFTER` : avant ou après la modification ;
+- `FOR EACH ROW` : exécuté une fois **par ligne** modifiée (sinon, une seule fois par instruction) ;
+- `:NEW` : les nouvelles valeurs (INSERT, UPDATE), `:OLD` : les anciennes (UPDATE, DELETE) ;
+- `WHEN (…)` : condition pour déclencher (sans les deux-points devant NEW) ;
+- `INSERTING`, `UPDATING`, `DELETING` disent quel événement a déclenché le trigger.
+Un trigger BEFORE peut **modifier** `:NEW` avant l'écriture :
+```sql
+CREATE OR REPLACE TRIGGER trg_emp_normaliser
+BEFORE INSERT OR UPDATE ON employes
+FOR EACH ROW
+BEGIN
+  :NEW.nom   := UPPER(TRIM(:NEW.nom));
+  :NEW.email := LOWER(:NEW.email);
+END;
+/
+```
+
+## Un trigger d'audit
+```sql
+CREATE OR REPLACE TRIGGER trg_emp_audit
+AFTER UPDATE OF salaire ON employes
+FOR EACH ROW
+BEGIN
+  INSERT INTO audit_salaires (id_employe, ancien, nouveau, modifie_par, modifie_le)
+  VALUES (:OLD.id_employe, :OLD.salaire, :NEW.salaire, USER, SYSDATE);
+END;
+/
+```
+L'INSERT d'audit fait partie de la même transaction : si l'UPDATE est annulé par ROLLBACK, la ligne d'audit l'est aussi.
+
+## La table en mutation : ORA-04091
+! Un trigger de ligne ne peut pas lire ni modifier la table sur laquelle il est posé : **ORA-04091: table EMPLOYES is mutating, trigger/function may not see it**. Par exemple, un trigger qui calcule `SELECT AVG(salaire) FROM employes` pendant un UPDATE de EMPLOYES. La solution moderne est le **trigger composé** (COMPOUND TRIGGER), qui collecte les lignes puis travaille une fois l'instruction terminée.
+
+## Avec modération
+Les triggers sont invisibles pour qui lit le code de l'application : un simple INSERT peut en déclencher dix autres. Ils ralentissent les chargements massifs, et compliquent le diagnostic. Réservez-les à ce qui doit **toujours** se produire, quelle que soit l'application : audit, contrôles d'intégrité complexes, valeurs calculées.
+> Pour les chargements massifs, un DBA peut désactiver un trigger : `ALTER TRIGGER trg_emp_audit DISABLE;` puis `ENABLE`.
+
+=== QUIZ
+? Que signifie FOR EACH ROW ?
+- Le trigger s'exécute une seule fois par instruction
++ Le trigger s'exécute une fois pour chaque ligne modifiée
+- Le trigger lit toutes les lignes de la table
+- Le trigger est désactivé
+= Sans FOR EACH ROW, c'est un trigger d'instruction, déclenché une seule fois.
+
+? Dans un trigger sur DELETE, que contient :NEW ?
+- Les valeurs supprimées
++ Rien d'utile : toutes ses valeurs sont NULL
+- Les valeurs de la ligne suivante
+- Une erreur de compilation
+= Pour un DELETE, les valeurs supprimées sont dans :OLD. :NEW n'a de sens que pour INSERT et UPDATE.
+
+? Quel type de trigger peut modifier les valeurs avant leur écriture ?
++ Un trigger BEFORE … FOR EACH ROW, en affectant :NEW
+- Un trigger AFTER … FOR EACH ROW
+- Un trigger d'instruction
+- Aucun
+= Dans un trigger AFTER, la ligne est déjà écrite : modifier :NEW y est interdit.
+
+? Que provoque ce trigger lors d'un UPDATE de EMPLOYES ?
+| CREATE OR REPLACE TRIGGER trg_controle
+| BEFORE UPDATE ON employes
+| FOR EACH ROW
+| DECLARE
+|   v_moy NUMBER;
+| BEGIN
+|   SELECT AVG(salaire) INTO v_moy FROM employes;
+| END;
+- Rien de particulier
++ ORA-04091 : la table est en mutation
+- ORA-01403
+- Une boucle infinie
+= Un trigger de ligne ne peut pas interroger la table qu'il surveille. Un trigger composé résout ce cas.
+
+? Un UPDATE de salaire déclenche un trigger d'audit, puis l'utilisateur fait ROLLBACK. Que devient la ligne d'audit ?
+- Elle reste dans la table
++ Elle est annulée elle aussi, car elle fait partie de la même transaction
+- Elle est déplacée dans la corbeille
+- Elle provoque ORA-04091
+= Le trigger travaille dans la transaction de l'instruction qui l'a déclenché.
+
+? Avant un chargement massif, comment un DBA peut-il suspendre un trigger sans le supprimer ?
+- `DROP TRIGGER`
++ `ALTER TRIGGER … DISABLE`
+- `TRUNCATE TRIGGER`
+- `ROLLBACK TRIGGER`
+= Puis `ALTER TRIGGER … ENABLE`. Attention : ce qui se passe pendant ce temps n'est ni contrôlé ni audité.

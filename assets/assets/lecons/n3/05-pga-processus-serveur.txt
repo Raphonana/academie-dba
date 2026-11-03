@@ -1,0 +1,69 @@
+# La PGA et les processus serveur
+@duree 8
+@resume La mémoire privée de chaque session, et le processus qui travaille pour elle.
+
+## Un processus serveur par session
+Quand une application se connecte, Oracle crée en général un **processus serveur dédié** (dedicated server) qui travaille uniquement pour cette session : il analyse le SQL, lit les blocs, trie, et renvoie les résultats. 300 sessions connectées, ce sont 300 processus sur le serveur.
+> Le mode **shared server** (anciennement MTS) partage un petit nombre de processus entre beaucoup de sessions. Il économise la mémoire, mais reste rare aujourd'hui : on préfère un **pool de connexions** côté application.
+
+## La PGA
+Chaque processus serveur a sa mémoire **privée**, la **PGA** (Program Global Area). Elle contient :
+- l'espace des **tris** (`ORDER BY`, `GROUP BY`, création d'index) et des **jointures par hachage** ;
+- l'état de la session et des curseurs ouverts ;
+- les variables et collections PL/SQL (un `BULK COLLECT` sans `LIMIT` peut la faire exploser).
+Quand un tri ne tient pas dans la PGA, Oracle le termine sur disque, dans le **tablespace temporaire**. C'est beaucoup plus lent.
+
+## Les paramètres
+- `PGA_AGGREGATE_TARGET` : l'objectif de mémoire PGA pour **toutes** les sessions réunies. Oracle répartit au mieux ;
+- `PGA_AGGREGATE_LIMIT` (depuis la 12c) : une limite dure. Au-delà, Oracle interrompt les sessions les plus gourmandes avec **ORA-04036: PGA memory used by the instance exceeds PGA_AGGREGATE_LIMIT** ;
+- `PROCESSES` : le nombre maximum de processus. Atteint, il provoque **ORA-00020: maximum number of processes exceeded** et plus personne ne peut se connecter ;
+- `SESSIONS` : calculé à partir de PROCESSES par défaut.
+! Une application qui ouvre des connexions sans jamais les fermer finit par atteindre PROCESSES. Le symptôme : « la base refuse les connexions » alors que tout le reste va bien.
+
+=== EXERCICES
+?? Affichez le nom et la valeur des paramètres qui commencent par `pga`.
+>> SELECT name, value FROM v$parameter WHERE name LIKE 'pga%'
+
+?? Affichez la limite PGA (`pga_aggregate_limit`) en Go.
+>> SELECT name, TO_NUMBER(value) / 1073741824 AS go FROM v$parameter WHERE name = 'pga_aggregate_limit'
+~ La valeur est en octets ; 1 Go = 1 073 741 824 octets. `TO_NUMBER` convertit le texte en nombre.
+
+?? Combien de sessions utilisateur (type USER) sont connectées en ce moment ? Comparez avec le paramètre `processes`.
+>> SELECT COUNT(*) FROM v$session WHERE type = 'USER'
+~ `V$SESSION`, colonne `type`.
+
+=== QUIZ
+? Qu'est-ce que la PGA ?
+- La mémoire partagée par toutes les sessions
++ La mémoire privée d'un processus serveur
+- Le tablespace temporaire
+- Le cache des requêtes
+= La SGA est partagée, la PGA est privée.
+
+? Un tri ne tient pas en PGA. Que fait Oracle ?
+- Il lève une erreur
++ Il termine le tri sur disque, dans le tablespace temporaire
+- Il annule la requête
+- Il agrandit la SGA
+= C'est plus lent, et si le tablespace temporaire est plein : ORA-01652.
+
+? Plus personne ne peut se connecter et l'alert log montre ORA-00020. Que se passe-t-il ?
+- La SGA est pleine
++ Le nombre maximum de processus (PROCESSES) est atteint
+- Le listener est arrêté
+- Le disque est plein
+= Souvent une application qui ne ferme pas ses connexions. On cherche dans V$SESSION qui en ouvre autant.
+
+? Quel paramètre fixe une limite dure à la mémoire PGA totale ?
+- PGA_AGGREGATE_TARGET
++ PGA_AGGREGATE_LIMIT
+- MEMORY_MAX_TARGET
+- SORT_AREA_SIZE
+= PGA_AGGREGATE_TARGET est un objectif ; LIMIT est une barrière (ORA-04036).
+
+? Combien de processus serveur dédiés pour 200 sessions en mode dedicated server ?
+- 1
+- 20
++ 200
+- Cela dépend de la SGA
+= Un processus par session. D'où l'intérêt des pools de connexions côté application.

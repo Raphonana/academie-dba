@@ -1,0 +1,103 @@
+# Data Pump : exporter et importer
+@duree 9
+@resume expdp, impdp, objets DIRECTORY, cohérence de l'export et transformations à l'import.
+
+## À quoi sert Data Pump ?
+Data Pump (`expdp` et `impdp`) exporte et importe des objets et leurs données dans un fichier « dump ». Ses usages :
+- **copier** un schéma de la production vers un environnement de test ;
+- **migrer** vers un autre serveur, une autre version ou une autre plateforme ;
+- **archiver** des données avant de les purger ;
+- **récupérer** une table précise exportée la veille.
+Data Pump s'exécute **dans le serveur** : les fichiers sont écrits sur la machine de la base, dans un répertoire déclaré à Oracle.
+
+## Le répertoire
+```sql
+CREATE DIRECTORY dp_dir AS '/u03/export';
+GRANT READ, WRITE ON DIRECTORY dp_dir TO system;
+```
+
+## Exporter
+```sql
+$ expdp system SCHEMAS=app_rh DIRECTORY=dp_dir
+        DUMPFILE=app_rh_%U.dmp LOGFILE=exp_app_rh.log
+        PARALLEL=4 FLASHBACK_TIME=SYSTIMESTAMP
+```
+- modes : `FULL=Y` (toute la base), `SCHEMAS=`, `TABLES=`, `TABLESPACES=` ;
+- `%U` numérote les fichiers quand on exporte en parallèle ;
+- `EXCLUDE=STATISTICS` ou `INCLUDE=TABLE:"IN ('EMPLOYES')"` filtrent les objets ;
+- `CONTENT=METADATA_ONLY` exporte la structure sans les données.
+! Sans `FLASHBACK_TIME` (ou `FLASHBACK_SCN`), chaque table est exportée à un instant différent. Sur une base active, on obtient des commandes sans leurs lignes, ou l'inverse. Pour un export cohérent, utilisez toujours FLASHBACK_TIME.
+
+## Importer
+```sql
+$ impdp system DIRECTORY=dp_dir DUMPFILE=app_rh_%U.dmp
+        REMAP_SCHEMA=app_rh:app_rh_test
+        REMAP_TABLESPACE=app_data:users
+        TABLE_EXISTS_ACTION=REPLACE
+```
+- `REMAP_SCHEMA` et `REMAP_TABLESPACE` changent le schéma ou le tablespace de destination ;
+- `TABLE_EXISTS_ACTION` : SKIP (par défaut), APPEND, TRUNCATE ou REPLACE ;
+- `SQLFILE=ddl.sql` n'importe rien et écrit les ordres DDL dans un fichier, pour les relire.
+> Un travail Data Pump peut être suivi et piloté pendant qu'il tourne : `expdp system ATTACH=SYS_EXPORT_SCHEMA_01`, puis `STATUS`, `STOP_JOB` ou `KILL_JOB`. La vue `DBA_DATAPUMP_JOBS` liste les travaux.
+> Pour importer dans une version plus ancienne, exportez avec `VERSION=12.2`, par exemple.
+
+=== EXERCICES
+?? Avant un export du schéma APP_VENTES, estimez sa taille : affichez la somme de ses segments en Go, arrondie à une décimale.
+>> SELECT ROUND(SUM(bytes) / 1073741824, 1) AS go FROM dba_segments WHERE owner = 'APP_VENTES'
+
+?? Affichez les tablespaces utilisés par les segments du schéma APP_RH, sans doublon : ce sont ceux qu'il faudra peut-être remapper à l'import.
+>> SELECT DISTINCT tablespace_name FROM dba_segments WHERE owner = 'APP_RH'
+
+=== INCIDENT
+# Rafraîchir la base de test
+@contexte L'équipe de recette veut, pour demain matin, une copie à jour du schéma APP_RH de la production, dans la base de test sous le nom APP_RH_TEST. La base de test n'a pas de tablespaces APP_DATA ni APP_INDEX, seulement USERS.
+?! Quelle commande d'export lancez-vous sur la production ?
+- expdp sans FLASHBACK_TIME, pour aller plus vite => L'export sera incohérent si des utilisateurs travaillent pendant ce temps : des fiches de paie sans leurs lignes, par exemple.
++ expdp SCHEMAS=app_rh avec FLASHBACK_TIME=SYSTIMESTAMP => Toutes les tables sont exportées au même instant, l'export est cohérent, et la production n'est pas bloquée.
+- Une sauvegarde RMAN de toute la base => RMAN copie des fichiers, pas un schéma : on ne peut pas restaurer un seul schéma sous un autre nom.
+?! À l'import en test, que se passera-t-il sans option particulière ?
++ La création des tables échouera, car le tablespace APP_DATA n'existe pas en test => ORA-00959: tablespace 'APP_DATA' does not exist, pour chaque table et chaque index.
+- Tout fonctionnera, Oracle choisira un tablespace au hasard => Oracle ne devine pas : il recrée les objets avec les clauses d'origine.
+- Les données iront dans SYSTEM => Heureusement non.
+?! Quelles options utilisez-vous à l'import ?
++ REMAP_SCHEMA=app_rh:app_rh_test, REMAP_TABLESPACE=app_data:users et REMAP_TABLESPACE=app_index:users => Les objets sont créés dans le bon schéma et le bon tablespace. Le schéma APP_RH_TEST est même créé automatiquement s'il n'existe pas, quand l'import est lancé par un compte DBA.
+- Créer en test des tablespaces APP_DATA de 60 Go => Inutile : le schéma RH ne pèse que quelques centaines de Mo, et la base de test n'a pas la place.
+?! L'import est terminé. Une dernière précaution ?
++ Lire le journal d'import, recompiler les objets invalides, et masquer les données sensibles (salaires) si la recette n'en a pas besoin => Un import « terminé » peut contenir des erreurs. Et copier des salaires réels dans une base de test peu protégée est un risque de fuite.
+- Aucune, l'import a réussi => Vérifiez toujours le journal : « Job completed with 12 error(s) » se rate facilement.
+
+=== QUIZ
+? Où Data Pump écrit-il ses fichiers ?
+- Sur le poste de l'utilisateur
++ Sur le serveur de la base, dans le répertoire d'un objet DIRECTORY
+- Dans la FRA
+- Dans le tablespace SYSTEM
+= Data Pump travaille côté serveur, contrairement à l'ancien exp/imp.
+
+? À quoi sert FLASHBACK_TIME=SYSTIMESTAMP ?
+- À accélérer l'export
++ À exporter toutes les tables au même instant, de façon cohérente
+- À restaurer la base
+- À exporter l'historique des modifications
+= Sans lui, chaque table est lue à un moment différent.
+
+? Comment importer le schéma APP_RH sous le nom APP_RH_TEST ?
+- RENAME_SCHEMA
++ REMAP_SCHEMA=app_rh:app_rh_test
+- SCHEMAS=app_rh_test
+- TABLE_EXISTS_ACTION=REPLACE
+= REMAP_TABLESPACE fait la même chose pour les tablespaces.
+
+? Que fait SQLFILE=ddl.sql avec impdp ?
++ Il écrit les ordres DDL dans un fichier sans rien importer
+- Il importe uniquement les données
+- Il exécute un script avant l'import
+- Il exporte la structure
+= Idéal pour relire ou adapter les ordres de création avant un vrai import.
+
+? Data Pump peut-il remplacer les sauvegardes RMAN ?
+- Oui, c'est plus simple
++ Non : il ne permet de revenir qu'à l'instant de l'export
+- Oui, avec FLASHBACK_TIME
+- Oui, si on exporte toutes les heures
+= C'est un complément, utile pour un schéma ou une table, jamais la protection principale.

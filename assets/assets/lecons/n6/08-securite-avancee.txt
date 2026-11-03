@@ -1,0 +1,79 @@
+# Sécurité avancée
+@duree 10
+@resume Audit unifié, chiffrement, analyse des privilèges, et l'outil DBSAT.
+
+## L'audit unifié
+Depuis la 12c, l'**audit unifié** (Unified Auditing) rassemble toutes les traces d'audit dans une seule vue, `UNIFIED_AUDIT_TRAIL`. On définit des **politiques** :
+```sql
+CREATE AUDIT POLICY pol_salaires
+  ACTIONS UPDATE ON app_rh.employes, DELETE ON app_rh.employes;
+AUDIT POLICY pol_salaires;
+
+CREATE AUDIT POLICY pol_dba ACTIONS ALL WHEN
+  'SYS_CONTEXT(''USERENV'', ''SESSION_USER'') IN (''OLD_BATCH'')' EVALUATE PER SESSION;
+
+SELECT event_timestamp, dbusername, action_name, object_name, sql_text
+FROM   unified_audit_trail
+ORDER  BY event_timestamp DESC;
+```
+Oracle fournit des politiques prêtes à l'emploi, comme `ORA_SECURECONFIG` (actions sensibles) et `ORA_LOGON_FAILURES` (échecs de connexion).
+> Auditez ce qui compte (accès aux données sensibles, actions des comptes privilégiés, échecs de connexion) et purgez régulièrement avec `DBMS_AUDIT_MGMT`. Un audit de tout, c'est une base ralentie et des traces que personne ne lit.
+
+## Le chiffrement
+- **sur le réseau** : le chiffrement natif d'Oracle Net (`SQLNET.ENCRYPTION_SERVER = REQUIRED` dans sqlnet.ora) ou TLS. Il est **inclus** dans toutes les éditions ;
+- **sur disque** : **TDE** (Transparent Data Encryption) chiffre les tablespaces ou des colonnes. Les clés sont dans un **keystore** (wallet). Un fichier de données ou une sauvegarde volés sont illisibles. TDE fait partie de l'option payante **Advanced Security** ;
+- les sauvegardes RMAN peuvent aussi être chiffrées.
+! Avec TDE, **perdre le keystore, c'est perdre les données** : aucune sauvegarde ne pourra plus être lue. Le keystore se sauvegarde à part, en plusieurs exemplaires, avec son mot de passe gardé en lieu sûr.
+
+## Le moindre privilège, mesuré
+L'**analyse des privilèges** (`DBMS_PRIVILEGE_CAPTURE`) enregistre, pendant une période représentative, les privilèges **réellement utilisés** par un compte. On compare ensuite avec ceux qu'il possède, et on retire le reste sans risque de casser l'application.
+
+## Évaluer sa base : DBSAT
+**DBSAT** (Database Security Assessment Tool) est un outil **gratuit** d'Oracle. Il analyse la configuration d'une base et produit un rapport : comptes à privilèges excessifs, comptes par défaut ouverts, paramètres dangereux, correctifs manquants, données sensibles repérées.
+> Les bases de la sécurité restent les plus efficaces : appliquer les correctifs, fermer les comptes inutiles, ne pas donner DBA à une application, chiffrer le réseau, auditer les comptes privilégiés.
+
+=== EXERCICES
+?? Affichez la valeur du paramètre `audit_trail`.
+>> SELECT value FROM v$parameter WHERE name = 'audit_trail'
+
+?? Affichez le nom et la date de création des comptes OPEN qui utilisent le profil DEFAULT, hors SYS et SYSTEM : ce sont les premiers à examiner.
+>> SELECT username, created FROM dba_users WHERE account_status = 'OPEN' AND profile = 'DEFAULT' AND username NOT IN ('SYS', 'SYSTEM')
+
+?? Le chiffrement TDE est-il utilisé sur PRODCM ? Affichez le nom de la fonction et si elle est utilisée actuellement.
+>> SELECT name, currently_used FROM dba_feature_usage_statistics WHERE name = 'Transparent Data Encryption'
+
+=== QUIZ
+? Où lit-on les traces de l'audit unifié ?
++ Dans UNIFIED_AUDIT_TRAIL
+- Dans l'alert log
+- Dans DBA_USERS
+- Dans V$SESSION
+= Toutes les sources d'audit y sont rassemblées depuis la 12c.
+
+? Le chiffrement réseau natif d'Oracle Net est-il payant ?
+- Oui, il fait partie d'Advanced Security
++ Non, il est inclus dans toutes les éditions
+- Seulement en RAC
+- Seulement en 23ai
+= TDE, en revanche, fait partie de l'option Advanced Security.
+
+? Que se passe-t-il si on perd le keystore TDE ?
+- Oracle le recrée automatiquement
++ Les données chiffrées, et leurs sauvegardes, deviennent illisibles
+- Rien, on peut le désactiver
+- Les données sont déchiffrées
+= Le keystore se sauvegarde à part, en plusieurs exemplaires.
+
+? À quoi sert l'analyse des privilèges ?
+- À donner plus de droits aux utilisateurs
++ À mesurer les privilèges réellement utilisés, pour retirer les autres sans risque
+- À chiffrer les mots de passe
+- À auditer les connexions
+= Le moindre privilège devient mesurable.
+
+? Qu'est-ce que DBSAT ?
++ Un outil gratuit d'Oracle qui évalue la sécurité de la configuration d'une base
+- Une option payante de chiffrement
+- Un type de sauvegarde
+- Une vue du dictionnaire
+= Son rapport est un excellent point de départ pour un audit.

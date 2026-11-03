@@ -1,0 +1,90 @@
+# Basculer : switchover et failover
+@duree 10
+@resume Le changement de rôle planifié, le basculement d'urgence, le broker et la réintégration.
+
+## Deux façons de changer de rôle
+- **Switchover** : un échange de rôles **planifié** entre la primaire et la base de secours. Aucune perte de données, et l'ancienne primaire devient aussitôt la nouvelle base de secours. On l'utilise pour une maintenance du site principal, ou pour **tester** régulièrement le plan de reprise ;
+- **Failover** : un basculement **d'urgence**, quand la primaire est perdue. La base de secours devient primaire. Selon le mode de protection, les dernières secondes de transactions peuvent être perdues.
+
+## Le broker
+Le **Data Guard Broker** gère la configuration et les basculements en quelques commandes :
+```sql
+$ dgmgrl sys@PRODCM
+DGMGRL> SHOW CONFIGURATION;
+DGMGRL> VALIDATE DATABASE 'PRODCM_DR';
+DGMGRL> SWITCHOVER TO 'PRODCM_DR';
+DGMGRL> FAILOVER TO 'PRODCM_DR';
+DGMGRL> REINSTATE DATABASE 'PRODCM';
+```
+`VALIDATE DATABASE` vérifie qu'un basculement est possible : à lancer avant tout switchover.
+Avec le **Fast-Start Failover**, un processus **observateur**, installé sur un troisième site, surveille les deux bases et déclenche le failover automatiquement si la primaire disparaît.
+
+## Après un failover : réintégrer l'ancienne primaire
+L'ancienne primaire a peut-être reçu des transactions que la base de secours n'a jamais vues. Pour la transformer en nouvelle base de secours :
+- si **Flashback Database** était activé, le broker la ramène à l'instant du failover et la réintègre (`REINSTATE`) en quelques minutes ;
+- sinon, il faut la **recréer** entièrement à partir d'une copie de la nouvelle primaire, ce qui peut prendre des heures.
+> C'est pour cela que Flashback Database est recommandé sur les deux bases d'une configuration Data Guard.
+
+## Les applications
+Après un basculement, les applications doivent se reconnecter à la nouvelle primaire. On utilise un **service** qui ne démarre que sur la base qui a le rôle PRIMARY, et une adresse de connexion qui liste les deux sites :
+```sql
+(DESCRIPTION =
+  (ADDRESS_LIST = (FAILOVER = ON)
+    (ADDRESS = (PROTOCOL = TCP)(HOST = srv-ora-prod01)(PORT = 1521))
+    (ADDRESS = (PROTOCOL = TCP)(HOST = srv-ora-dr01)(PORT = 1521)))
+  (CONNECT_DATA = (SERVICE_NAME = PRODCM_APP)))
+```
+
+=== INCIDENT
+# Le site principal est perdu
+@contexte Dimanche, 3 h du matin. Un incendie s'est déclaré dans la salle serveurs du site principal. Le serveur srv-ora-prod01 ne répond plus. Une base de secours PRODCM_DR, en mode Maximum Performance (ASYNC), tourne dans le site de secours. Le directeur informatique vous demande de redémarrer la production.
+?! Que vérifiez-vous avant toute action ?
++ L'état de la base de secours et son retard au moment de la coupure => SHOW CONFIGURATION montre la primaire injoignable. Sur PRODCM_DR, l'apply lag est de 4 secondes : quelques secondes de transactions risquent d'être perdues, et le directeur doit le savoir.
+- Rien, vous basculez tout de suite => Vous ne sauriez pas quelle perte annoncer, ni si la base de secours est en état de prendre le relais.
+- L'alert log de la primaire => La primaire est dans un bâtiment en feu : impossible d'y accéder.
+?! Quelle opération lancez-vous ?
+- Un switchover vers PRODCM_DR => Un switchover a besoin des deux bases, pour échanger leurs rôles proprement. La primaire est perdue : il échouerait.
++ Un failover vers PRODCM_DR, après accord du directeur sur la perte possible de quelques secondes => `FAILOVER TO 'PRODCM_DR';` La base de secours devient primaire en moins d'une minute.
+- Une restauration de la sauvegarde de la nuit sur un nouveau serveur => Des heures d'arrêt et toute la journée de samedi perdue, alors qu'une copie à 4 secondes près est prête.
+?! PRODCM_DR est primaire. Que faut-il encore pour que les magasins puissent travailler ?
++ Vérifier que le service applicatif a démarré sur la nouvelle primaire, et que les applications s'y reconnectent => Le service PRODCM_APP ne démarre que sur la base au rôle PRIMARY : il est maintenant actif sur le site de secours. Les applications, configurées avec les deux adresses, se reconnectent.
+- Rien, Data Guard s'occupe de tout => La base est prête, mais si les applications pointent encore uniquement vers le site incendié, personne ne travaille.
+?! Trois semaines plus tard, le site principal est reconstruit. Et maintenant ?
++ Recréer une base de secours sur le site principal, puis faire un switchover un dimanche pour revenir à la configuration d'origine => L'ancienne base est perdue avec ses disques : on crée une nouvelle base de secours par DUPLICATE, on la laisse rattraper son retard, puis un switchover planifié, sans perte, remet la primaire sur le site principal.
+- Rester indéfiniment sans base de secours => Le site de secours est maintenant votre seule copie : un nouvel incident serait fatal.
+
+=== QUIZ
+? Quelle est la différence entre switchover et failover ?
++ Le switchover est un échange planifié sans perte ; le failover est un basculement d'urgence quand la primaire est perdue
+- Ce sont deux synonymes
+- Le failover est toujours sans perte
+- Le switchover nécessite une restauration
+= Le switchover sert aussi à tester régulièrement le plan de reprise.
+
+? Quelle commande du broker vérifie qu'un basculement est possible ?
+- SHOW DATABASE
++ VALIDATE DATABASE
+- CHECK CONFIGURATION
+- TEST SWITCHOVER
+= À lancer avant tout switchover planifié.
+
+? Que fait l'observateur du Fast-Start Failover ?
+- Il sauvegarde la base
++ Il surveille les deux bases et déclenche le failover automatiquement si la primaire disparaît
+- Il compresse le redo
+- Il remplace le listener
+= Il doit tourner sur un troisième site, pour ne pas disparaître avec l'un des deux autres.
+
+? Pourquoi activer Flashback Database dans une configuration Data Guard ?
+- Pour accélérer le transport du redo
++ Pour pouvoir réintégrer rapidement l'ancienne primaire après un failover
+- Pour ouvrir la base de secours en lecture
+- Ce n'est pas utile
+= Sans lui, il faut recréer entièrement l'ancienne primaire.
+
+? Comment les applications retrouvent-elles la nouvelle primaire après un basculement ?
+- Il faut les reconfigurer à la main
++ Avec un service qui ne démarre que sur la base primaire, et une adresse de connexion qui liste les deux sites
+- Par le DNS uniquement
+- Elles ne peuvent pas
+= C'est à préparer avant l'incident, pas pendant.

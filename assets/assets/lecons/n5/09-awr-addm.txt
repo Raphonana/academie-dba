@@ -1,0 +1,79 @@
+# AWR et ADDM
+@duree 9
+@resume Les photos de performance, le rapport AWR, le diagnostic ADDM, et la question des licences.
+
+## L'Automatic Workload Repository
+Toutes les heures (par défaut), le processus MMON prend une **photo** (snapshot) des statistiques de performance de l'instance : temps par événement, requêtes les plus coûteuses, lectures, mémoire… et la range dans le tablespace SYSAUX. Les photos sont gardées **8 jours** par défaut.
+Un **rapport AWR** compare deux photos et montre ce qui s'est passé entre les deux :
+```sql
+SQL> @?/rdbms/admin/awrrpt.sql          -- rapport de l'instance
+SQL> @?/rdbms/admin/awrsqrpt.sql        -- rapport sur une seule requête
+SQL> @?/rdbms/admin/awrddrpt.sql        -- comparer deux périodes
+
+EXEC DBMS_WORKLOAD_REPOSITORY.CREATE_SNAPSHOT;   -- prendre une photo maintenant
+EXEC DBMS_WORKLOAD_REPOSITORY.MODIFY_SNAPSHOT_SETTINGS(retention => 43200, interval => 30);
+```
+> Gardez au moins **un mois** d'historique (43 200 minutes) : pour comprendre un problème de fin de mois, il faut pouvoir le comparer au mois précédent.
+
+## Lire un rapport AWR
+Les sections à regarder en premier :
+- **Load Profile** : l'activité par seconde (transactions, lectures, analyses) ;
+- **Top 10 Foreground Events by Total Wait Time** : où est passé le DB time. C'est le point de départ ;
+- **SQL ordered by Elapsed Time**, **by CPU Time**, **by Gets**, **by Reads** : les requêtes responsables ;
+- **Instance Efficiency** : ratios à prendre avec précaution (un « buffer hit ratio » de 99 % ne prouve rien).
+
+## ADDM
+**ADDM** (Automatic Database Diagnostic Monitor) analyse automatiquement chaque période entre deux photos et rédige des **constats** : « La requête g0bggfqrddc4w consomme 62 % du DB time, envisagez le SQL Tuning Advisor ». C'est un très bon point de départ, à vérifier ensuite.
+```sql
+SQL> @?/rdbms/admin/addmrpt.sql
+```
+
+## Attention aux licences
+! AWR, ASH et ADDM font partie du **Diagnostics Pack**, une option **payante** de l'Enterprise Edition. Les utiliser sans licence (même en lançant un simple awrrpt.sql) expose l'entreprise à un redressement lors d'un audit Oracle. Le paramètre `CONTROL_MANAGEMENT_PACK_ACCESS` (DIAGNOSTIC+TUNING par défaut) contrôle leur accès.
+> Sans licence, l'outil gratuit **Statspack** (`spcreate.sql`, `spreport.sql`) donne l'essentiel d'un rapport AWR. En Standard Edition, c'est l'outil de référence.
+
+=== EXERCICES
+?? Affichez la valeur du paramètre `control_management_pack_access`.
+>> SELECT value FROM v$parameter WHERE name = 'control_management_pack_access'
+
+?? Affichez le nombre d'utilisations détectées et la date de dernière utilisation des fonctions AWR Report et ADDM.
+>> SELECT name, detected_usages, last_usage_date FROM dba_feature_usage_statistics WHERE name IN ('AWR Report', 'ADDM')
+
+?? Affichez les 3 requêtes qui ont consommé le plus de temps (elapsed_time) au total, avec leur sql_id et leur temps en secondes arrondi, comme dans la section « SQL ordered by Elapsed Time » d'un rapport AWR.
+>> SELECT sql_id, ROUND(elapsed_time / 1000000) AS secondes FROM v$sql ORDER BY elapsed_time DESC FETCH FIRST 3 ROWS ONLY
+
+=== QUIZ
+? À quelle fréquence AWR prend-il une photo par défaut ?
+- Chaque minute
++ Chaque heure
+- Chaque jour
+- Seulement à la demande
+= Et il garde les photos 8 jours par défaut.
+
+? Quelle section d'un rapport AWR lire en premier ?
++ Les principaux événements d'attente (Top Foreground Events)
+- La liste des paramètres
+- Le nom du serveur
+- Les ratios d'efficacité
+= Elle dit où est passé le DB time ; les sections SQL disent ensuite qui en est responsable.
+
+? Que fait ADDM ?
+- Il sauvegarde la base
++ Il analyse automatiquement chaque période AWR et propose des constats et recommandations
+- Il supprime les vieilles photos AWR
+- Il crée des index automatiquement
+= Ses recommandations sont un point de départ, à vérifier.
+
+? AWR est-il gratuit ?
+- Oui, dans toutes les éditions
++ Non : il fait partie du Diagnostics Pack, option payante de l'Enterprise Edition
+- Oui, jusqu'à 8 jours d'historique
+- Seulement en Standard Edition
+= Lancer un rapport AWR sans licence est une infraction aux conditions d'Oracle.
+
+? Quel outil gratuit remplace AWR sans licence Diagnostics Pack ?
+- ADDM
+- ASH
++ Statspack
+- SQL Tuning Advisor
+= Il est installé avec spcreate.sql et donne l'essentiel des informations d'un rapport AWR.

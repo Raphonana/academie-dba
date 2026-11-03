@@ -1,0 +1,68 @@
+# Comment Oracle joint les tables
+@duree 8
+@resume Boucles imbriquées, jointure par hachage, tri-fusion : trois méthodes, trois usages.
+
+## Boucles imbriquées (NESTED LOOPS)
+Pour chaque ligne de la première table (la table **pilote**), Oracle cherche les lignes correspondantes dans la seconde, en général par un index.
+- **idéal** quand la table pilote ramène **peu de lignes** et que la seconde a un index sur la colonne de jointure ;
+- **catastrophique** quand la table pilote ramène des millions de lignes : des millions d'accès par index.
+C'est la méthode typique des écrans transactionnels : « la commande 98231 et ses lignes ».
+
+## Jointure par hachage (HASH JOIN)
+Oracle lit la plus petite des deux tables et construit en mémoire (PGA) une **table de hachage** sur la colonne de jointure. Puis il lit l'autre table et cherche chaque ligne dans cette table de hachage.
+- **idéal** pour joindre de **gros volumes**, dans les rapports et les traitements de masse ;
+- fonctionne seulement avec une égalité (`=`) ;
+- si la table de hachage ne tient pas en PGA, elle déborde dans le tablespace temporaire, et la jointure ralentit fortement.
+
+## Tri-fusion (SORT MERGE JOIN)
+Oracle trie les deux tables sur la colonne de jointure, puis les parcourt ensemble, comme on fusionne deux listes triées. Utile pour les jointures sur une **inégalité** (`<`, `BETWEEN`), ou quand les données sont déjà triées par un index. Plus rare en pratique.
+
+## Le piège du mauvais choix
+Le choix de la méthode dépend de l'estimation du nombre de lignes. Si l'optimiseur croit que la table pilote ramène 1 ligne alors qu'elle en ramène 500 000, il choisira des boucles imbriquées… et la requête mettra des heures. C'est l'une des premières choses à vérifier dans un plan lent :
+```sql
+|  1 |  NESTED LOOPS          |              |      1 |  500K |   <- estimé 1, réel 500 000
+|  2 |   TABLE ACCESS FULL    | VENTES       |      1 |  500K |
+|  3 |   INDEX RANGE SCAN     | PK_LIGNES    |      3 |  1.5M |
+```
+! Forcer une méthode avec un hint (`/*+ USE_HASH(l) */`) corrige le symptôme, pas la cause. La cause, presque toujours, ce sont des estimations fausses : on corrige les statistiques.
+
+=== EXERCICES
+?? Affichez le texte et le temps moyen par exécution, en secondes arrondies à deux décimales, de la requête du rapport mensuel (texte contenant `rapport mensuel`).
+>> SELECT sql_text, ROUND(elapsed_time / executions / 1000000, 2) AS secondes FROM v$sql WHERE sql_text LIKE '%rapport mensuel%'
+~ elapsed_time est en microsecondes.
+
+=== QUIZ
+? Quand les boucles imbriquées sont-elles la meilleure méthode ?
++ Quand la table pilote ramène peu de lignes et que l'autre table a un index sur la jointure
+- Quand les deux tables sont énormes
+- Quand la jointure utilise BETWEEN
+- Jamais
+= C'est le cas typique des écrans transactionnels.
+
+? Où la jointure par hachage construit-elle sa table de hachage ?
+- Dans la SGA
++ Dans la PGA, en débordant dans le tablespace temporaire si besoin
+- Dans le tablespace SYSTEM
+- Dans l'undo
+= Une PGA trop petite ralentit fortement les grosses jointures.
+
+? Une jointure par hachage peut-elle servir pour `ON a.date BETWEEN b.debut AND b.fin` ?
+- Oui
++ Non : elle ne fonctionne qu'avec une égalité
+- Oui, si les tables sont petites
+- Seulement en 19c
+= Pour une inégalité, Oracle utilise des boucles imbriquées ou un tri-fusion.
+
+? Un plan montre NESTED LOOPS avec une estimation de 1 ligne et 500 000 lignes réelles. Quelle est la vraie cause du problème ?
+- La méthode NESTED LOOPS est défectueuse
++ L'estimation fausse, souvent due aux statistiques, qui a conduit au mauvais choix de méthode
+- Le serveur manque de mémoire
+- La table est trop petite
+= Corriger les statistiques corrige le choix, pour cette requête et pour toutes les autres.
+
+? Quelle méthode convient le mieux pour joindre deux tables de 50 millions de lignes dans un rapport ?
+- NESTED LOOPS
++ HASH JOIN
+- INDEX UNIQUE SCAN
+- Aucune, c'est impossible
+= Lire chaque table une fois et les apparier en mémoire est bien plus efficace que 50 millions d'accès par index.

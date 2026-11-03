@@ -1,0 +1,105 @@
+# Votre premier SELECT
+@duree 7
+@resume Lire des colonnes, calculer, renommer avec un alias, et la table DUAL.
+
+## Lire toute une table
+`SELECT` sert à lire des données. La forme la plus simple affiche toutes les colonnes de toutes les lignes :
+```sql
+SELECT *
+FROM   employes;
+```
+L'étoile `*` signifie « toutes les colonnes ». Le point-virgule termine l'instruction dans les outils comme SQL*Plus ou SQL Developer.
+> En production, évitez `SELECT *` dans les programmes : nommez les colonnes dont vous avez besoin. La requête reste correcte même si quelqu'un ajoute une colonne à la table.
+
+## Choisir les colonnes
+```sql
+SELECT nom, prenom, salaire
+FROM   employes;
+```
+Les colonnes s'affichent dans l'ordre où vous les écrivez.
+
+## Calculer
+On peut faire des calculs directement dans le `SELECT`, avec `+`, `-`, `*` et `/` :
+```sql
+SELECT nom, salaire, salaire * 12
+FROM   employes;
+```
+Les valeurs de la table ne changent pas : le calcul n'existe que dans le résultat.
+
+## Renommer avec un alias
+Le titre de la colonne calculée `SALAIRE*12` n'est pas très parlant. Un **alias** lui donne un nom :
+```sql
+SELECT nom,
+       salaire * 12 AS salaire_annuel,
+       salaire * 12 "Salaire annuel"
+FROM   employes;
+```
+Le mot `AS` est facultatif. Mettez l'alias entre **guillemets doubles** s'il contient des espaces, des accents, ou pour garder les minuscules.
+
+## Coller du texte : ||
+L'opérateur `||` met des valeurs bout à bout. Le texte fixe s'écrit entre **apostrophes simples** :
+```sql
+SELECT prenom || ' ' || nom AS nom_complet
+FROM   employes;
+```
+
+## La table DUAL
+Pour calculer quelque chose qui ne vient d'aucune table, Oracle fournit `DUAL`, une table spéciale d'une seule ligne :
+```sql
+SELECT 7 * 6 AS reponse FROM dual;
+SELECT SYSDATE FROM dual;
+```
+! Ne confondez pas les guillemets : 'texte' (apostrophes) pour une valeur, "Alias" (guillemets doubles) pour un nom de colonne.
+
+=== QUIZ
+? Que fait `SELECT * FROM services;` ?
+- Il supprime la table SERVICES
++ Il affiche toutes les colonnes de toutes les lignes de SERVICES
+- Il compte les lignes de SERVICES
+- Il affiche uniquement la première colonne
+= L'étoile désigne toutes les colonnes. Sans condition, toutes les lignes sont affichées.
+
+? Comment afficher le salaire mensuel augmenté de 10 % ?
+- `SELECT salaire + 10% FROM employes;`
++ `SELECT salaire * 1.1 FROM employes;`
+- `SELECT salaire PLUS 10 FROM employes;`
+- `UPDATE employes SET salaire * 1.1;`
+= On multiplie par 1,1. Le calcul ne modifie pas la table, il n'apparaît que dans le résultat.
+
+? Quel alias est correctement écrit pour garder un espace dans le titre ?
+- `salaire * 12 AS Salaire annuel`
+- `salaire * 12 AS 'Salaire annuel'`
++ `salaire * 12 AS "Salaire annuel"`
+- `salaire * 12 = Salaire annuel`
+= Un alias avec espace se met entre guillemets doubles. Les apostrophes simples sont réservées aux valeurs texte.
+
+? Que renvoie `SELECT prenom || ' ' || nom FROM employes;` pour Paul MBARGA ?
++ `Paul MBARGA`
+- `PaulMBARGA`
+- `Paul || MBARGA`
+- Une erreur
+= `||` colle les morceaux bout à bout : le prénom, un espace, puis le nom.
+
+? À quoi sert la table DUAL ?
+- À stocker les doublons
+- À faire des sauvegardes
++ À évaluer une expression qui ne dépend d'aucune table
+- À relier deux tables
+= `DUAL` contient une seule ligne : elle permet par exemple `SELECT SYSDATE FROM dual;`.
+
+=== EXERCICES
+?? Affichez le nom, le prénom et le salaire de tous les employés.
+>> SELECT nom, prenom, salaire FROM employes
+~ Séparez les colonnes par des virgules.
+
+?? Affichez le nom et le salaire annuel (salaire × 12) de chaque employé.
+>> SELECT nom, salaire * 12 AS salaire_annuel FROM employes
+~ On peut calculer directement dans le SELECT : `salaire * 12`.
+
+?? Affichez dans une seule colonne le nom complet de chaque employé, sous la forme `Paul MBARGA`.
+>> SELECT prenom || ' ' || nom AS nom_complet FROM employes
+~ Collez le prénom, un espace `' '` et le nom avec `||`.
+
+?? Avec la table `DUAL`, calculez 1 500 000 divisé par 12.
+>> SELECT 1500000 / 12 FROM dual
+~ Dans Oracle, un SELECT a toujours un FROM : utilisez `FROM dual`.

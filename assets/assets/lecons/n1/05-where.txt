@@ -1,0 +1,102 @@
+# Filtrer avec WHERE
+@duree 8
+@resume Comparaisons, AND / OR / NOT, BETWEEN, IN et LIKE.
+
+## Garder seulement certaines lignes
+La clause `WHERE` filtre les lignes : seules celles qui vérifient la condition apparaissent dans le résultat.
+```sql
+SELECT nom, salaire
+FROM   employes
+WHERE  salaire > 700000;
+```
+
+## Les opérateurs de comparaison
+- `=` égal, `<>` ou `!=` différent ;
+- `<`, `<=`, `>`, `>=` pour comparer des nombres, des dates ou du texte.
+Le texte se compare entre apostrophes, et la comparaison **tient compte des majuscules** :
+```sql
+WHERE nom = 'FOTSO'   -- trouve Jean
+WHERE nom = 'Fotso'   -- ne trouve rien
+```
+> `--` commence un commentaire : tout ce qui suit sur la ligne est ignoré.
+
+## Combiner : AND, OR, NOT
+```sql
+SELECT nom FROM employes
+WHERE  id_service = 20
+AND    salaire < 700000;
+```
+`AND` exige que les deux conditions soient vraies, `OR` qu'au moins une le soit, et `NOT` inverse une condition.
+! `AND` est évalué avant `OR`, comme la multiplication avant l'addition. En cas de doute, mettez des parenthèses : `WHERE (id_service = 20 OR id_service = 30) AND salaire > 600000`.
+
+## Un intervalle : BETWEEN
+```sql
+WHERE salaire BETWEEN 500000 AND 800000
+```
+Les deux bornes sont **incluses** : c'est équivalent à `salaire >= 500000 AND salaire <= 800000`.
+
+## Une liste : IN
+```sql
+WHERE id_service IN (20, 30)
+```
+C'est plus lisible qu'une série de `OR`. `NOT IN` donne l'inverse.
+
+## Un motif : LIKE
+`LIKE` cherche un motif dans du texte, avec deux jokers :
+- `%` remplace n'importe quelle suite de caractères (même vide) ;
+- `_` remplace exactement un caractère.
+```sql
+WHERE nom LIKE 'B%'     -- commence par B
+WHERE nom LIKE '%NG%'   -- contient NG
+WHERE prenom LIKE '_ean' -- 4 lettres finissant par ean
+```
+
+=== QUIZ
+? Quelle requête liste les employés gagnant au moins 720 000 FCFA ?
+- `WHERE salaire > 720000`
++ `WHERE salaire >= 720000`
+- `WHERE salaire => 720000`
+- `WHERE salaire = >720000`
+= `>=` signifie « supérieur ou égal ». `>` exclurait Marie ATANGA, qui gagne exactement 720 000.
+
+? `WHERE nom = 'Bello'` trouve-t-il Ibrahim BELLO ?
+- Oui, Oracle ignore les majuscules
++ Non, la comparaison de texte tient compte des majuscules
+- Oui, mais seulement avec LIKE
+- Non, il faut des guillemets doubles
+= 'Bello' et 'BELLO' sont deux valeurs différentes. La leçon sur les fonctions montre comment comparer sans tenir compte de la casse.
+
+? `WHERE salaire BETWEEN 650000 AND 900000` inclut-il un salaire de 900 000 ?
++ Oui, les deux bornes sont incluses
+- Non, la borne haute est exclue
+- Non, les deux bornes sont exclues
+- Seulement si on ajoute INCLUSIVE
+= `BETWEEN a AND b` équivaut à `>= a AND <= b`.
+
+? Quel motif trouve les noms qui se terminent par « GA » ?
+- `LIKE 'GA%'`
++ `LIKE '%GA'`
+- `LIKE '_GA'`
+- `LIKE 'GA_'`
+= `%GA` : n'importe quoi devant, puis GA à la fin. Ici : MBARGA et ATANGA.
+
+? Que renvoie `WHERE id_service = 20 OR id_service = 30 AND salaire > 700000` ?
+- Les employés des services 20 et 30 qui gagnent plus de 700 000
++ Tous les employés du service 20, plus ceux du service 30 qui gagnent plus de 700 000
+- Aucune ligne
+- Une erreur de syntaxe
+= `AND` passe avant `OR` : Oracle lit `id_service = 20 OR (id_service = 30 AND salaire > 700000)`. Utilisez des parenthèses pour dire ce que vous voulez vraiment.
+
+=== EXERCICES
+?? Affichez le nom et le salaire des employés qui gagnent plus de 700 000.
+>> SELECT nom, salaire FROM employes WHERE salaire > 700000
+
+?? Affichez le nom et le numéro de service des employés des services 20 et 30, avec `IN`.
+>> SELECT nom, id_service FROM employes WHERE id_service IN (20, 30)
+
+?? Affichez le nom des employés dont le nom se termine par « GA ».
+>> SELECT nom FROM employes WHERE nom LIKE '%GA'
+~ `%` remplace n'importe quelle suite de caractères. Attention aux majuscules.
+
+?? Affichez le nom et le salaire des employés qui gagnent entre 500 000 et 800 000 (bornes comprises).
+>> SELECT nom, salaire FROM employes WHERE salaire BETWEEN 500000 AND 800000

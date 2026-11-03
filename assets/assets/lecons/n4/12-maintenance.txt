@@ -1,0 +1,100 @@
+# La maintenance courante
+@duree 9
+@resume Statistiques de l'optimiseur, recompilation, purges, et les tâches automatiques.
+
+## Les statistiques de l'optimiseur
+Pour choisir le meilleur plan d'exécution, l'optimiseur s'appuie sur des **statistiques** : nombre de lignes, taille des tables, distribution des valeurs, profondeur des index. Des statistiques fausses ou périmées donnent de mauvais plans : une requête de 2 secondes en met soudain 20 minutes.
+- Oracle collecte automatiquement les statistiques périmées chaque nuit, dans la **fenêtre de maintenance** (22 h à 2 h en semaine, toute la journée le week-end), grâce à la tâche *auto optimizer stats collection* ;
+- après un gros chargement ou une purge massive, on les collecte soi-même :
+```sql
+EXEC DBMS_STATS.GATHER_TABLE_STATS('APP_VENTES', 'LIGNES_VENTES');
+EXEC DBMS_STATS.GATHER_SCHEMA_STATS('APP_RH');
+
+SELECT table_name, last_analyzed, stale_stats
+FROM   dba_tab_statistics
+WHERE  owner = 'APP_VENTES';
+```
+! Ne supprimez pas les statistiques d'une table et ne désactivez pas la collecte automatique « pour voir » : les plans de toute la base peuvent changer d'un coup.
+
+## Recompiler les objets invalides
+```sql
+ALTER PROCEDURE app_ventes.p_cloture_jour COMPILE;
+ALTER PACKAGE app_rh.pkg_paie COMPILE BODY;
+SHOW ERRORS
+@?/rdbms/admin/utlrp.sql      -- tout recompiler, dans le bon ordre
+```
+Un objet qui reste invalide après recompilation a une **vraie erreur** : `DBA_ERRORS` en donne le détail. C'est alors l'équipe de développement qu'il faut prévenir.
+
+## Purger ce qui grossit
+- l'**audit** : `DBMS_AUDIT_MGMT` pour purger proprement les traces d'audit anciennes ;
+- la **corbeille** : `PURGE DBA_RECYCLEBIN;` (en SYSDBA) ;
+- l'**AWR** : la rétention se règle avec `DBMS_WORKLOAD_REPOSITORY.MODIFY_SNAPSHOT_SETTINGS` (8 jours par défaut) ;
+- les **fichiers de trace** et l'alert log : la politique de purge de l'ADR (`adrci> set control (SHORTP_POLICY = 168)`) ;
+- les **tables de l'application** qui ne sont jamais purgées : à discuter avec les équipes métier.
+> Les tâches automatiques se voient dans `DBA_AUTOTASK_CLIENT`, les travaux planifiés dans `DBA_SCHEDULER_JOBS` et leur historique dans `DBA_SCHEDULER_JOB_RUN_DETAILS`.
+
+=== EXERCICES
+?? Affichez le propriétaire, le nom et le type des objets invalides, avec la date de leur dernière modification, du plus récent au plus ancien.
+>> SELECT owner, object_name, object_type, last_ddl_time FROM dba_objects WHERE status = 'INVALID' ORDER BY last_ddl_time DESC
+
+?? Générez la commande de recompilation de chaque procédure ou vue invalide, sous la forme `ALTER PROCEDURE APP_VENTES.P_CLOTURE_JOUR COMPILE;`.
+>> SELECT 'ALTER ' || object_type || ' ' || owner || '.' || object_name || ' COMPILE;' AS commande FROM dba_objects WHERE status = 'INVALID' AND object_type IN ('PROCEDURE', 'VIEW')
+
+=== INCIDENT
+# La clôture du soir a échoué
+@contexte Mercredi, 8 h. Le traitement de clôture journalière des ventes a échoué cette nuit avec ORA-04063: procedure "APP_VENTES.P_CLOTURE_JOUR" has errors. Une nouvelle version de l'application RH a été livrée hier à 18 h.
+?! Par quoi commencez-vous ?
++ La liste des objets invalides et leur date de modification => Trois objets sont invalides depuis hier 18 h 15 : PKG_PAIE (corps), V_STATS_MOIS et P_CLOTURE_JOUR. La livraison est en cause.
+- Une restauration de la base à hier 17 h => Vous perdriez toute l'activité depuis hier soir pour un problème de compilation.
+- Un redémarrage de la base => Un objet invalide le reste après un redémarrage.
+?! Que tentez-vous ?
++ Lancer utlrp.sql pour tout recompiler dans le bon ordre => V_STATS_MOIS et P_CLOTURE_JOUR redeviennent valides : ils étaient seulement invalidés par la livraison. Mais le corps de PKG_PAIE reste invalide.
+- Recréer les trois objets à partir d'une ancienne version trouvée sur le serveur => Vous annuleriez une partie de la livraison sans le dire à personne, avec des effets imprévisibles.
+- Donner le rôle DBA à APP_RH pour que tout compile => Le rôle DBA n'aide en rien une procédure à compiler (les rôles ne comptent pas dans le PL/SQL), et c'est une faille de sécurité.
+?! Le corps de PKG_PAIE refuse toujours de compiler :
+| SQL> ALTER PACKAGE app_rh.pkg_paie COMPILE BODY;
+| Warning: Package Body altered with compilation errors.
+| SQL> SHOW ERRORS
+| 42/7  PL/SQL: ORA-00942: table or view does not exist
+| 42/7  PL/SQL: SQL Statement ignored
++ Vous transmettez l'erreur exacte à l'équipe de développement : leur code utilise une table qui n'a pas été livrée => C'est une erreur de livraison, pas un problème de base. Avec la ligne et le message, ils trouvent en cinq minutes le script oublié.
+- Vous créez une table vide au hasard pour que ça compile => Le package compilerait, mais travaillerait sur une table vide et fausse : des fiches de paie erronées en perspective.
+?! La clôture des ventes peut-elle être relancée en attendant ?
++ Oui : P_CLOTURE_JOUR est de nouveau valide, on la relance et on vérifie son résultat => La clôture ne dépendait pas du package de paie. Elle passe, les ventes de la veille sont clôturées.
+- Non, il faut attendre que tout soit corrigé => Inutile de bloquer les ventes pour un problème qui ne concerne que la paie.
+
+=== QUIZ
+? À quoi servent les statistiques de l'optimiseur ?
+- À mesurer la charge du serveur
++ À aider l'optimiseur à choisir le meilleur plan d'exécution
+- À compter les connexions
+- À accélérer les sauvegardes
+= Des statistiques fausses donnent de mauvais plans, donc des requêtes lentes.
+
+? Quand Oracle collecte-t-il automatiquement les statistiques ?
+- À chaque requête
++ Pendant la fenêtre de maintenance nocturne, pour les objets dont les statistiques sont périmées
+- Uniquement au démarrage
+- Jamais : c'est au DBA de le faire
+= On complète à la main après un chargement ou une purge massive.
+
+? Un objet reste invalide après utlrp.sql. Que faire ?
+- Le supprimer
++ Lire l'erreur (DBA_ERRORS, SHOW ERRORS) et la transmettre aux développeurs si c'est leur code
+- Redémarrer la base
+- Lancer utlrp.sql une dixième fois
+= utlrp ne corrige pas les vraies erreurs de code ; il recompile ce qui peut l'être.
+
+? Quelle commande vide la corbeille de toute la base ?
+- `DELETE FROM recyclebin;`
++ `PURGE DBA_RECYCLEBIN;`
+- `DROP RECYCLEBIN;`
+- `TRUNCATE TABLE recyclebin;`
+= Elle se lance en SYSDBA. `PURGE RECYCLEBIN` vide seulement la corbeille de l'utilisateur.
+
+? Que contient DBA_SCHEDULER_JOB_RUN_DETAILS ?
++ L'historique des exécutions des travaux planifiés, avec leur statut et leurs erreurs
+- La liste des sauvegardes RMAN
+- Les statistiques des tables
+- Les connexions des utilisateurs
+= C'est là qu'on découvre un traitement de nuit qui échoue en silence.

@@ -1,0 +1,93 @@
+# UNION, INTERSECT et MINUS
+@duree 7
+@resume Combiner les résultats de plusieurs requêtes comme des ensembles.
+
+## Quatre opérateurs
+Les opérateurs ensemblistes combinent les lignes de deux `SELECT` :
+- `UNION` : les lignes de l'un **ou** de l'autre, sans doublon ;
+- `UNION ALL` : toutes les lignes des deux, doublons compris ;
+- `INTERSECT` : les lignes présentes **dans les deux** ;
+- `MINUS` : les lignes du premier qui ne sont **pas** dans le second.
+```sql
+-- Les employés qui sont aussi managers
+SELECT id_employe FROM employes
+INTERSECT
+SELECT id_manager FROM employes;      -- 1 et 2
+
+-- Les employés qui ne managent personne
+SELECT id_employe FROM employes
+MINUS
+SELECT id_manager FROM employes;      -- 3, 4 et 5
+```
+> `MINUS` est propre à Oracle. La norme SQL (et d'autres SGBD) l'appelle `EXCEPT` ; Oracle n'accepte `EXCEPT` qu'à partir de la version 21c.
+
+## Les règles
+- Les deux requêtes doivent avoir **le même nombre de colonnes**, sinon : **ORA-01789: query block has incorrect number of result columns** ;
+- les colonnes doivent avoir des types compatibles, deux à deux (ORA-01790 sinon) ;
+- les noms de colonnes du résultat sont ceux de la **première** requête ;
+- un seul `ORDER BY`, tout à la fin, qui s'applique au résultat complet.
+
+## UNION ou UNION ALL ?
+`UNION` doit supprimer les doublons : Oracle trie ou hache tout le résultat, ce qui coûte cher sur de gros volumes. Si vous savez qu'il n'y a pas de doublon, ou qu'ils ne vous gênent pas, utilisez `UNION ALL`.
+```sql
+SELECT nom, 'employé' AS type FROM employes
+UNION ALL
+SELECT nom, 'service' FROM services
+ORDER  BY nom;
+```
+! Les opérateurs ensemblistes considèrent deux NULL comme égaux, contrairement à `=`. C'est une des rares exceptions à la règle « NULL n'est égal à rien ».
+
+=== EXERCICES
+?? Avec `MINUS`, affichez les numéros des employés qui ne sont manager de personne.
+>> SELECT id_employe FROM employes MINUS SELECT id_manager FROM employes
+
+?? Avec `INTERSECT`, affichez les numéros des employés qui sont manager d'au moins une personne.
+>> SELECT id_employe FROM employes INTERSECT SELECT id_manager FROM employes
+
+?? Affichez dans une seule colonne les noms de tous les employés suivis des noms de tous les services, doublons compris.
+>> SELECT nom FROM employes UNION ALL SELECT nom FROM services
+~ `UNION ALL` garde toutes les lignes.
+
+?? Affichez sans doublon les villes des services 20, 30 et 40, avec `UNION` entre une requête sur le service 20 et une requête sur les services 30 et 40.
+>> SELECT ville FROM services WHERE id_service = 20
+>> UNION
+>> SELECT ville FROM services WHERE id_service IN (30, 40)
+
+=== QUIZ
+? Quelle est la différence entre UNION et UNION ALL ?
+- UNION ALL supprime les doublons
++ UNION supprime les doublons, UNION ALL les garde
+- UNION ALL trie le résultat
+- Aucune différence
+= `UNION` élimine les doublons, ce qui demande un tri ou un hachage. `UNION ALL` est donc plus rapide.
+
+? Comment Oracle 19c écrit-il « les lignes de A qui ne sont pas dans B » ?
+- `A EXCEPT B`
++ `A MINUS B`
+- `A NOT IN B`
+- `A - B`
+= `MINUS` est le mot d'Oracle. `EXCEPT` n'est accepté qu'à partir de la 21c.
+
+? Que se passe-t-il ici ?
+| SELECT nom FROM employes
+| UNION
+| SELECT nom, ville FROM services;
+- Oracle complète avec NULL
++ ORA-01789 : les deux requêtes n'ont pas le même nombre de colonnes
+- Seule la première colonne est gardée
+- La requête fonctionne
+= Chaque requête d'un opérateur ensembliste doit avoir le même nombre de colonnes.
+
+? Où placer ORDER BY dans une requête avec UNION ?
+- Dans chaque SELECT
+- Seulement dans le premier SELECT
++ Une seule fois, à la toute fin
+- C'est interdit
+= Le tri s'applique au résultat final, donc après le dernier SELECT.
+
+? Quels noms de colonnes porte le résultat d'un UNION ?
++ Ceux de la première requête
+- Ceux de la dernière requête
+- Des noms générés par Oracle
+- Les deux noms séparés par un /
+= C'est pour cela qu'on met les alias dans le premier SELECT.

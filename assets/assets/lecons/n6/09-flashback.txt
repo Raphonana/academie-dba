@@ -1,0 +1,93 @@
+# Les technologies Flashback
+@duree 9
+@resume Revenir en arrière sans restauration : table, requête, versions, base entière.
+
+## Toute une famille
+Les technologies **Flashback** permettent de réparer une erreur humaine bien plus vite qu'une restauration RMAN. Chacune agit à une échelle différente :
+- **Flashback Query** : lire une table telle qu'elle était à un instant passé (`AS OF TIMESTAMP`), grâce à l'undo ;
+- **Flashback Versions Query** : voir toutes les versions successives d'une ligne ;
+- **Flashback Table** : remettre une table entière à un instant passé ;
+- **Flashback Drop** : récupérer une table supprimée, depuis la corbeille ;
+- **Flashback Database** : ramener toute la base à un instant passé.
+
+## Flashback Versions Query
+```sql
+SELECT versions_starttime, versions_operation, salaire
+FROM   app_rh.employes
+       VERSIONS BETWEEN TIMESTAMP SYSTIMESTAMP - INTERVAL '1' HOUR AND SYSTIMESTAMP
+WHERE  id_employe = 3;
+```
+On voit qui a changé quoi, et quand : précieux pour comprendre une donnée « qui a changé toute seule ».
+
+## Flashback Table
+```sql
+ALTER TABLE app_rh.employes ENABLE ROW MOVEMENT;
+FLASHBACK TABLE app_rh.employes TO TIMESTAMP SYSTIMESTAMP - INTERVAL '20' MINUTE;
+FLASHBACK TABLE app_rh.employes TO BEFORE DROP;     -- depuis la corbeille
+```
+Flashback Table s'appuie sur l'undo : il ne remonte pas plus loin que ce que l'undo a gardé.
+
+## Flashback Database
+Flashback Database écrit des **journaux de flashback** dans la FRA. Il permet de ramener toute la base à un instant passé en quelques minutes, sans restauration :
+```sql
+ALTER SYSTEM SET db_flashback_retention_target = 1440;   -- en minutes : 24 heures
+ALTER DATABASE FLASHBACK ON;
+
+SHUTDOWN IMMEDIATE
+STARTUP MOUNT
+FLASHBACK DATABASE TO TIMESTAMP SYSTIMESTAMP - INTERVAL '2' HOUR;
+ALTER DATABASE OPEN RESETLOGS;
+```
+Très utile pour : annuler une livraison ratée, réintégrer une ancienne primaire Data Guard, rejouer un test plusieurs fois sur une copie.
+! Flashback Database ramène **toute** la base en arrière : le travail de tous les utilisateurs depuis cet instant est perdu. Pour une seule table, préférez Flashback Table ou une extraction depuis une copie.
+
+## Les points de restauration
+Un **point de restauration** donne un nom à un instant. Un point **garanti** oblige Oracle à garder tous les journaux nécessaires pour y revenir, même si Flashback Database n'est pas activé, et même s'il faut pour cela remplir la FRA.
+```sql
+CREATE RESTORE POINT avant_livraison GUARANTEE FLASHBACK DATABASE;
+SELECT name, guarantee_flashback_database, time FROM v$restore_point;
+DROP RESTORE POINT avant_livraison;
+```
+
+=== EXERCICES
+?? Flashback Database est-il activé sur PRODCM ? Affichez le nom de la base et la colonne correspondante.
+>> SELECT name, flashback_on FROM v$database
+
+?? Avant d'activer Flashback Database, vérifiez la place dans la FRA : affichez l'espace libre réel (limite moins espace utilisé, plus espace récupérable), en Go.
+>> SELECT (space_limit - space_used + space_reclaimable) / 1073741824 AS libre_go FROM v$recovery_file_dest
+
+=== QUIZ
+? Sur quoi s'appuie Flashback Table ?
++ Sur l'undo
+- Sur les sauvegardes RMAN
+- Sur les journaux de flashback
+- Sur Data Guard
+= Il ne remonte donc pas plus loin que ce que l'undo a gardé.
+
+? Que faut-il activer sur une table avant FLASHBACK TABLE … TO TIMESTAMP ?
+- Rien
++ ROW MOVEMENT
+- FORCE LOGGING
+- Le partitionnement
+= Les lignes remises en état peuvent changer de ROWID.
+
+? Où Flashback Database écrit-il ses journaux ?
+- Dans l'undo
++ Dans la zone de récupération (FRA)
+- Dans le tablespace SYSTEM
+- Dans l'alert log
+= Leur volume dépend de l'activité et de db_flashback_retention_target.
+
+? Un développeur a supprimé par erreur les lignes d'une table il y a dix minutes. Quelle solution choisir en premier ?
+- Flashback Database
++ Flashback Table (ou Flashback Query pour récupérer les lignes)
+- Restauration RMAN de toute la base
+- Data Pump
+= Flashback Database ferait perdre le travail de toute la base.
+
+? Que garantit un point de restauration garanti ?
++ Qu'Oracle gardera tous les journaux nécessaires pour revenir à cet instant, quitte à remplir la FRA
+- Que la base ne tombera jamais en panne
+- Que les sauvegardes réussiront
+- Que les plans d'exécution ne changeront pas
+= Il faut le supprimer dès qu'il n'est plus utile.

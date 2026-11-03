@@ -1,0 +1,101 @@
+# Sous-requêtes corrélées et EXISTS
+@duree 9
+@resume Une sous-requête qui dépend de chaque ligne, EXISTS, et le piège de NOT IN avec NULL.
+
+## La sous-requête corrélée
+Une sous-requête **corrélée** fait référence à une colonne de la requête principale. Elle est donc (logiquement) réévaluée pour chaque ligne.
+Qui gagne plus que la moyenne **de son propre service** ?
+```sql
+SELECT e.nom, e.salaire
+FROM   employes e
+WHERE  e.salaire > (SELECT AVG(x.salaire)
+                    FROM   employes x
+                    WHERE  x.id_service = e.id_service);
+-- NGO : 900 000 contre 775 000 de moyenne à l'Informatique
+```
+L'alias `e` relie la sous-requête à la ligne en cours. Sans alias distincts, on ne saurait pas de quelle table `employes` on parle.
+
+## EXISTS : y a-t-il au moins une ligne ?
+`EXISTS (sous-requête)` est vrai dès que la sous-requête trouve **au moins une ligne**. Les colonnes du SELECT n'ont aucune importance : on écrit souvent `SELECT 1`.
+```sql
+-- Les employés qui sont manager de quelqu'un
+SELECT e.nom
+FROM   employes e
+WHERE  EXISTS (SELECT 1 FROM employes x WHERE x.id_manager = e.id_employe);
+-- MBARGA, NGO
+```
+`NOT EXISTS` donne l'inverse : FOTSO, ATANGA et BELLO ne managent personne.
+> Oracle arrête la recherche dès la première ligne trouvée : `EXISTS` est souvent très efficace.
+
+## Le piège de NOT IN avec NULL
+On pourrait écrire la même chose avec `NOT IN` :
+```sql
+SELECT nom FROM employes
+WHERE  id_employe NOT IN (SELECT id_manager FROM employes);
+-- aucune ligne !
+```
+! La sous-requête contient un NULL (MBARGA n'a pas de manager). Or `x NOT IN (1, 2, NULL)` signifie `x <> 1 AND x <> 2 AND x <> NULL`, et `x <> NULL` est toujours « inconnu ». Résultat : aucune ligne. C'est l'un des bugs SQL les plus fréquents en production.
+Deux corrections :
+```sql
+WHERE id_employe NOT IN (SELECT id_manager FROM employes
+                         WHERE  id_manager IS NOT NULL)
+
+WHERE NOT EXISTS (SELECT 1 FROM employes x WHERE x.id_manager = e.id_employe)
+```
+> Règle simple : pour « n'existe pas dans », préférez `NOT EXISTS`. Il n'a pas ce problème.
+
+=== EXERCICES
+?? Avec `EXISTS`, affichez le nom des employés qui sont manager d'au moins une personne.
+>> SELECT e.nom FROM employes e WHERE EXISTS (SELECT 1 FROM employes x WHERE x.id_manager = e.id_employe)
+
+?? Avec `NOT EXISTS`, affichez le nom des employés qui ne managent personne.
+>> SELECT e.nom FROM employes e WHERE NOT EXISTS (SELECT 1 FROM employes x WHERE x.id_manager = e.id_employe)
+
+?? Même question, mais avec `NOT IN` : écrivez une version qui fonctionne malgré le NULL.
+>> SELECT nom FROM employes WHERE id_employe NOT IN (SELECT id_manager FROM employes WHERE id_manager IS NOT NULL)
+~ Excluez les NULL dans la sous-requête avec `IS NOT NULL`.
+
+?? Affichez le nom et le salaire des employés qui gagnent plus que la moyenne de leur service.
+>> SELECT e.nom, e.salaire FROM employes e WHERE e.salaire > (SELECT AVG(x.salaire) FROM employes x WHERE x.id_service = e.id_service)
+~ Une sous-requête corrélée : `WHERE x.id_service = e.id_service`.
+
+?? Affichez le nom des services qui ont au moins un employé gagnant plus de 800 000.
+>> SELECT s.nom FROM services s WHERE EXISTS (SELECT 1 FROM employes e WHERE e.id_service = s.id_service AND e.salaire > 800000)
+
+=== QUIZ
+? Qu'est-ce qui rend une sous-requête « corrélée » ?
+- Elle est placée dans le FROM
++ Elle utilise une colonne de la requête principale
+- Elle renvoie une seule ligne
+- Elle contient un GROUP BY
+= La sous-requête dépend de la ligne en cours de la requête principale, via un alias.
+
+? Que teste `EXISTS (sous-requête)` ?
+- Que la sous-requête renvoie exactement une ligne
++ Que la sous-requête renvoie au moins une ligne
+- Que la sous-requête ne renvoie pas de NULL
+- Que la table existe dans la base
+= Dès qu'une ligne est trouvée, EXISTS est vrai. Le contenu du SELECT ne compte pas.
+
+? Que renvoie cette requête sur notre table ?
+| SELECT nom FROM employes
+| WHERE id_employe NOT IN (SELECT id_manager FROM employes);
+- FOTSO, ATANGA et BELLO
+- Tous les employés
++ Aucune ligne
+- Une erreur ORA-01427
+= La sous-requête contient un NULL (le manager de MBARGA). `NOT IN` avec un NULL dans la liste ne renvoie jamais rien.
+
+? Quelle écriture est sûre même si la sous-requête peut contenir des NULL ?
+- `NOT IN`
++ `NOT EXISTS`
+- `<> ALL`
+- `!= ANY`
+= `NOT EXISTS` ne compare pas de valeurs à NULL : il vérifie seulement l'absence de lignes.
+
+? Dans `SELECT 1 FROM employes x WHERE x.id_manager = e.id_employe`, que représente `e` ?
+- Une autre table nommée E
++ La ligne en cours de la requête principale
+- Une variable PL/SQL
+- La table DUAL
+= `e` est l'alias de la table de la requête principale : c'est ce qui corrèle la sous-requête.

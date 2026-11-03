@@ -1,0 +1,110 @@
+# PL/SQL : le bloc et les variables
+@duree 9
+@resume La structure d'un bloc, DBMS_OUTPUT, les variables, %TYPE et %ROWTYPE.
+
+## Pourquoi PL/SQL ?
+SQL décrit des données, mais ne sait pas faire de boucle, de condition ou de traitement d'erreur. **PL/SQL** (Procedural Language/SQL) est le langage de programmation d'Oracle : il mélange instructions procédurales et SQL, et s'exécute **dans le serveur**, au plus près des données. Les procédures, les fonctions, les packages et les triggers sont écrits en PL/SQL.
+> Le bac à sable de l'application n'exécute pas le PL/SQL : il faut un vrai serveur Oracle. Oracle propose gratuitement Oracle Database Free et le site Oracle Live SQL pour s'entraîner.
+
+## Le bloc
+Tout programme PL/SQL est un **bloc** en trois parties, dont seule la deuxième est obligatoire :
+```sql
+DECLARE
+  -- déclarations (facultatif)
+  v_nb NUMBER;
+BEGIN
+  -- instructions (obligatoire)
+  SELECT COUNT(*) INTO v_nb FROM employes;
+  DBMS_OUTPUT.PUT_LINE('Nombre d''employés : ' || v_nb);
+EXCEPTION
+  -- traitement des erreurs (facultatif)
+  WHEN OTHERS THEN
+    DBMS_OUTPUT.PUT_LINE('Erreur : ' || SQLERRM);
+END;
+/
+```
+- Chaque instruction se termine par `;`, y compris `END;` ;
+- dans SQL*Plus ou SQL Developer, la barre `/` seule sur sa ligne **exécute** le bloc ;
+- un bloc sans nom s'appelle un **bloc anonyme** : il n'est pas enregistré dans la base.
+
+## Afficher : DBMS_OUTPUT
+`DBMS_OUTPUT.PUT_LINE` écrit une ligne dans un tampon. L'outil ne l'affiche que si on l'a demandé :
+```sql
+SET SERVEROUTPUT ON
+```
+! Oubli classique : sans `SET SERVEROUTPUT ON` dans SQL*Plus, le bloc s'exécute bien… mais rien ne s'affiche.
+
+## Les variables
+Une variable se déclare avec un nom, un type et éventuellement une valeur de départ :
+```sql
+DECLARE
+  v_nom      VARCHAR2(50);
+  v_salaire  NUMBER(10) := 0;           -- := est l'affectation
+  c_taux     CONSTANT NUMBER := 0.05;   -- constante
+  v_actif    BOOLEAN := TRUE;           -- BOOLEAN existe en PL/SQL
+BEGIN
+  v_salaire := v_salaire + 1000;
+END;
+```
+> En PL/SQL, `=` compare et `:=` affecte. Une variable non initialisée vaut NULL.
+> Contrairement au SQL de la 19c, PL/SQL possède le type `BOOLEAN`.
+
+## %TYPE et %ROWTYPE
+Plutôt que de recopier le type d'une colonne, on le référence :
+```sql
+DECLARE
+  v_nom  employes.nom%TYPE;     -- même type que la colonne
+  r_emp  employes%ROWTYPE;      -- une ligne complète
+BEGIN
+  SELECT * INTO r_emp FROM employes WHERE id_employe = 3;
+  DBMS_OUTPUT.PUT_LINE(r_emp.prenom || ' ' || r_emp.nom);   -- Jean FOTSO
+END;
+```
+Si la colonne passe un jour de `VARCHAR2(50)` à `VARCHAR2(80)`, le code suit tout seul.
+
+=== QUIZ
+? Quelle partie d'un bloc PL/SQL est obligatoire ?
+- DECLARE
++ BEGIN … END
+- EXCEPTION
+- Les trois
+= Un bloc minimal est `BEGIN NULL; END;`. DECLARE et EXCEPTION sont facultatifs.
+
+? Ce bloc s'exécute sans erreur dans SQL*Plus, mais rien ne s'affiche. Pourquoi ?
+| BEGIN
+|   DBMS_OUTPUT.PUT_LINE('Bonjour');
+| END;
+| /
+- Il manque DECLARE
+- PUT_LINE n'existe pas
++ L'affichage n'est pas activé : il faut SET SERVEROUTPUT ON
+- Il faut un COMMIT
+= DBMS_OUTPUT écrit dans un tampon que l'outil n'affiche qu'avec SERVEROUTPUT activé.
+
+? Quel est l'opérateur d'affectation en PL/SQL ?
+- `=`
++ `:=`
+- `==`
+- `<-`
+= `v := 10;` affecte, `v = 10` compare.
+
+? Quel est l'intérêt de `v_nom employes.nom%TYPE` ?
+- La variable est plus rapide
++ La variable prend automatiquement le type de la colonne, même s'il change
+- La variable est remplie automatiquement
+- La variable devient une constante
+= Le code reste juste si la définition de la colonne évolue.
+
+? Que vaut une variable NUMBER déclarée sans valeur initiale ?
+- 0
++ NULL
+- Une valeur aléatoire
+- Une erreur à la compilation
+= Comme en SQL, l'absence de valeur est NULL. `NULL + 1` vaut NULL : pensez à initialiser vos compteurs.
+
+? Que fait la barre `/` seule sur sa ligne dans SQL*Plus ?
+- Elle commente la ligne
++ Elle envoie le bloc PL/SQL au serveur pour l'exécuter
+- Elle divise par zéro
+- Elle termine la session
+= Dans un bloc, les `;` terminent les instructions : il faut un autre signal pour dire « le bloc est fini, exécute-le ».

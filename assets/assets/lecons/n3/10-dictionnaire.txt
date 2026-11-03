@@ -1,0 +1,77 @@
+# Le dictionnaire de données
+@duree 8
+@resume USER_, ALL_, DBA_, V$ et GV$ : la base qui se décrit elle-même.
+
+## Une base qui se décrit
+Oracle enregistre la description de tout ce qu'il contient (tables, colonnes, utilisateurs, droits, fichiers…) dans des tables internes du schéma **SYS**, dans le tablespace SYSTEM. On ne les lit jamais directement : on passe par des **vues**.
+! On ne modifie jamais le dictionnaire à la main (`UPDATE SYS.OBJ$…`). C'est le meilleur moyen de rendre une base irrécupérable, et Oracle Support refusera de vous aider.
+
+## Trois préfixes, trois portées
+- `USER_` : les objets **dont vous êtes propriétaire** (`USER_TABLES`, `USER_OBJECTS`…) ;
+- `ALL_` : les objets **auxquels vous avez accès**, y compris ceux des autres (avec une colonne `OWNER`) ;
+- `DBA_` : **tous** les objets de la base. Réservé aux comptes qui ont le privilège `SELECT ANY DICTIONARY` ou le rôle DBA.
+```sql
+SELECT table_name FROM user_tables;
+SELECT owner, table_name FROM all_tables WHERE owner = 'APP_RH';
+SELECT owner, object_name, status FROM dba_objects WHERE status = 'INVALID';
+```
+
+## Les vues dynamiques V$
+Les vues `V$` (`V$SESSION`, `V$SGA`, `V$LOG`…) montrent l'**état de l'instance** : elles sont construites à partir de la mémoire et du fichier de contrôle. Certaines sont lisibles dès l'étape NOMOUNT ou MOUNT, avant même que le dictionnaire soit ouvert.
+- avec RAC, les vues `GV$` montrent toutes les instances du cluster (colonne `INST_ID`) ;
+- les vues `V$` sont remises à zéro à chaque redémarrage de l'instance.
+> Pour trouver une vue, interrogez le dictionnaire du dictionnaire : `SELECT table_name, comments FROM dictionary WHERE table_name LIKE '%TABLESPACE%';`
+
+## Objets invalides
+Quand une table change, les vues, procédures et packages qui l'utilisent deviennent `INVALID` dans `DBA_OBJECTS`. Oracle essaie de les recompiler au prochain appel ; si la recompilation échoue, l'appel lève une erreur. Après une mise à jour ou une migration, le DBA recompile tout avec le script `utlrp.sql` :
+```sql
+@?/rdbms/admin/utlrp.sql
+```
+(`?` désigne ORACLE_HOME dans SQL*Plus.)
+
+=== EXERCICES
+?? Affichez le propriétaire, le nom et le type des objets invalides de la base.
+>> SELECT owner, object_name, object_type FROM dba_objects WHERE status = 'INVALID'
+
+?? Affichez le nombre d'objets de chaque type appartenant à APP_RH.
+>> SELECT object_type, COUNT(*) FROM dba_objects WHERE owner = 'APP_RH' GROUP BY object_type
+
+?? Affichez le nom et le type des objets modifiés (`last_ddl_time`) le 27 octobre 2026 ou après.
+>> SELECT object_name, object_type FROM dba_objects WHERE last_ddl_time >= DATE '2026-10-27'
+~ Un littéral `DATE '2026-10-27'` désigne le 27 octobre à minuit.
+
+=== QUIZ
+? Quelle vue montre les tables dont vous êtes propriétaire ?
++ USER_TABLES
+- ALL_TABLES
+- DBA_TABLES
+- V$TABLES
+= USER_ pour vos objets, ALL_ pour ceux auxquels vous avez accès, DBA_ pour tous.
+
+? Que faut-il pour interroger les vues DBA_ ?
+- Rien de particulier
++ Le privilège SELECT ANY DICTIONARY, ou le rôle DBA
+- Être connecté en SYSDBA
+- Être propriétaire des objets
+= Les vues DBA_ montrent toute la base : elles sont protégées.
+
+? D'où viennent les informations des vues V$ ?
+- Des fichiers de données uniquement
++ De la mémoire de l'instance et du fichier de contrôle
+- Du listener
+- Des sauvegardes RMAN
+= C'est pour cela que certaines sont lisibles avant l'ouverture de la base.
+
+? Que fait le script utlrp.sql ?
+- Il sauvegarde la base
++ Il recompile tous les objets invalides
+- Il met à jour Oracle
+- Il purge l'alert log
+= On le lance après une mise à jour, une migration ou un changement massif de structure.
+
+? Peut-on corriger une valeur directement dans une table SYS comme OBJ$ ?
+- Oui, avec un UPDATE puis un COMMIT
++ Non, jamais : on risque de rendre la base irrécupérable
+- Oui, mais seulement en SYSDBA
+- Oui, si la base est en MOUNT
+= Le dictionnaire se modifie uniquement avec des ordres SQL (CREATE, ALTER, GRANT…).

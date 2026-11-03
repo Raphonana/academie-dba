@@ -1,0 +1,77 @@
+# Gérer l'undo et le temporaire
+@duree 8
+@resume ORA-30036, ORA-01652 : dimensionner l'undo et le tablespace temporaire.
+
+## L'undo
+Le tablespace d'undo doit tenir :
+- l'undo des transactions **en cours** (indispensable) ;
+- l'undo des transactions validées depuis moins de `UNDO_RETENTION` secondes (souhaitable, pour la lecture cohérente et le flashback).
+Quand une transaction ne trouve plus de place : **ORA-30036: unable to extend segment by 8 in undo tablespace 'UNDOTBS1'**. Typiquement, un énorme `DELETE` ou `UPDATE` sans COMMIT intermédiaire, ou un fichier d'undo sans autoextend.
+```sql
+-- Taille d'undo nécessaire, en gros :
+-- UNDO_RETENTION x (blocs d'undo générés par seconde) x taille de bloc
+SELECT MAX(undoblks / ((end_time - begin_time) * 86400)) AS blocs_par_seconde
+FROM   v$undostat;
+```
+> L'**Undo Advisor** d'Enterprise Manager, ou `V$UNDOSTAT`, permet de dimensionner à partir de l'activité réelle. On peut aussi changer de tablespace d'undo à chaud : `ALTER SYSTEM SET undo_tablespace = UNDOTBS2;`.
+
+## Le tablespace temporaire
+Le tablespace temporaire reçoit les tris, hachages et tables temporaires qui ne tiennent pas en PGA. Il est fait de **tempfiles** :
+- ils ne sont **pas sauvegardés** par RMAN : on les recrée simplement après une restauration ;
+- ils sont créés « à la demande » : un tempfile de 30 Go peut n'occuper que quelques Mo sur le disque au début.
+Quand une requête ne trouve plus de place : **ORA-01652: unable to extend temp segment by 128 in tablespace TEMP**.
+```sql
+SELECT s.username, s.sid, u.tablespace, u.blocks * 8192 / 1048576 AS mo
+FROM   v$tempseg_usage u
+JOIN   v$session s ON s.saddr = u.session_addr
+ORDER  BY u.blocks DESC;
+
+ALTER TABLESPACE temp ADD TEMPFILE '/u02/oradata/PRODCM/temp02.dbf' SIZE 4G;
+```
+! Avant d'agrandir TEMP, regardez **qui** le remplit. Une seule requête mal écrite (une jointure oubliée qui produit un produit cartésien) peut consommer des centaines de Go : agrandir ne fera que retarder l'erreur.
+
+=== EXERCICES
+?? Affichez le nom, la taille en Mo et l'autoextend des fichiers temporaires.
+>> SELECT file_name, bytes / 1048576 AS mo, autoextensible FROM dba_temp_files
+
+?? Affichez la taille maximale en Go jusqu'à laquelle le fichier d'undo peut grandir, arrondie à l'unité.
+>> SELECT ROUND(maxbytes / 1073741824) AS go FROM dba_data_files WHERE tablespace_name = 'UNDOTBS1'
+
+?? Affichez le nom et le type de contenu des tablespaces d'undo et temporaires.
+>> SELECT tablespace_name, contents FROM dba_tablespaces WHERE contents IN ('UNDO', 'TEMPORARY')
+
+=== QUIZ
+? Que signifie ORA-30036 ?
+- Une requête a besoin d'un undo déjà écrasé
++ Une transaction ne trouve plus de place dans le tablespace d'undo
+- Le tablespace temporaire est plein
+- Le fichier de contrôle est perdu
+= ORA-01555 est l'erreur des lectures ; ORA-30036 celle des transactions.
+
+? Que contient le tablespace temporaire ?
+- Les données des tables temporaires uniquement
++ Les tris, hachages et objets temporaires qui ne tiennent pas en mémoire
+- L'undo
+- Les archives
+= Il est utilisé dès qu'une opération dépasse la PGA disponible.
+
+? RMAN sauvegarde-t-il les tempfiles ?
+- Oui, comme les autres fichiers
++ Non : on les recrée après une restauration
+- Seulement en mode ARCHIVELOG
+- Seulement s'ils sont en autoextend
+= Ils ne contiennent rien qui mérite d'être sauvegardé.
+
+? Une requête remplit TEMP à chaque exécution. Que faites-vous d'abord ?
+- J'agrandis TEMP de 100 Go
++ J'identifie la requête et je regarde pourquoi elle consomme autant
+- Je redémarre la base
+- Je supprime TEMP
+= Une jointure oubliée ou un tri géant ne se règle pas avec de l'espace disque.
+
+? Peut-on changer de tablespace d'undo sans arrêter la base ?
++ Oui, avec ALTER SYSTEM SET undo_tablespace
+- Non, jamais
+- Oui, mais seulement en MOUNT
+- Seulement en NOARCHIVELOG
+= L'ancien tablespace se vide progressivement à mesure que ses transactions se terminent.

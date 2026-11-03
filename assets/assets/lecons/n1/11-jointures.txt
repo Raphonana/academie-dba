@@ -1,0 +1,101 @@
+# Les jointures
+@duree 10
+@resume Relier plusieurs tables : INNER JOIN, LEFT JOIN, auto-jointure et syntaxe Oracle (+).
+
+## Pourquoi joindre ?
+La table `EMPLOYES` ne contient que le numéro du service. Pour afficher le **nom** du service et sa ville à côté de chaque employé, il faut lire les deux tables en même temps et faire correspondre `employes.id_service` avec `services.id_service`. C'est une **jointure**.
+
+## INNER JOIN
+```sql
+SELECT e.nom, e.prenom, s.nom AS service, s.ville
+FROM   employes e
+JOIN   services s ON s.id_service = e.id_service;
+```
+- `e` et `s` sont des **alias de table** : ils raccourcissent l'écriture et évitent toute ambiguïté, car les deux tables ont une colonne `nom` ;
+- `JOIN` tout court veut dire `INNER JOIN` : seules les lignes qui trouvent une correspondance des deux côtés sont gardées.
+! Dans Oracle, un alias de table s'écrit **sans** `AS` : `FROM employes e`. Écrire `FROM employes AS e` provoque une erreur (ORA-00933).
+
+## LEFT JOIN : garder les lignes sans correspondance
+Imaginons qu'on crée un service 50 « Juridique » à Bafoussam, sans aucun employé pour l'instant. Avec `JOIN`, il n'apparaît pas. Avec `LEFT JOIN`, on garde **toutes** les lignes de la table de gauche :
+```sql
+SELECT s.nom AS service, e.nom AS employe
+FROM   services s
+LEFT   JOIN employes e ON e.id_service = s.id_service;
+```
+Le service Juridique apparaît avec `employe` à NULL. C'est la façon classique de trouver « les services sans employé » : on ajoute `WHERE e.id_employe IS NULL`.
+> Il existe aussi `RIGHT JOIN` (l'inverse) et `FULL JOIN` (toutes les lignes des deux côtés). En pratique, `LEFT JOIN` suffit presque toujours : il suffit de mettre la table à garder en premier.
+
+## Joindre une table à elle-même
+Le manager d'un employé est aussi un employé. On lit donc `EMPLOYES` deux fois, avec deux alias différents :
+```sql
+SELECT e.nom AS employe, m.nom AS manager
+FROM   employes e
+LEFT   JOIN employes m ON m.id_employe = e.id_manager;
+```
+FOTSO a pour manager NGO, et MBARGA apparaît avec un manager NULL grâce au `LEFT JOIN`.
+
+## L'ancienne syntaxe Oracle
+Vous croiserez beaucoup de code écrit avant la norme SQL de 1999, avec les conditions dans le `WHERE` :
+```sql
+SELECT e.nom, s.nom
+FROM   employes e, services s
+WHERE  s.id_service = e.id_service;         -- jointure interne
+
+SELECT s.nom, e.nom
+FROM   services s, employes e
+WHERE  e.id_service (+) = s.id_service;     -- jointure externe
+```
+Le `(+)` se met du côté de la table qui peut **manquer**. Cette syntaxe fonctionne encore, mais écrivez du nouveau code avec `JOIN … ON`.
+! Si vous oubliez la condition de jointure, chaque ligne d'une table est associée à chaque ligne de l'autre : c'est un **produit cartésien**. 5 employés × 4 services = 20 lignes, presque toutes fausses.
+
+=== QUIZ
+? Que fait un INNER JOIN ?
+- Il garde toutes les lignes des deux tables
++ Il ne garde que les lignes qui ont une correspondance dans les deux tables
+- Il garde toutes les lignes de la table de gauche
+- Il copie une table dans l'autre
+= `JOIN` (= `INNER JOIN`) élimine les lignes sans correspondance.
+
+? Lequel de ces alias de table est accepté par Oracle ?
+- `FROM employes AS e`
++ `FROM employes e`
+- `FROM e = employes`
+- `FROM employes ALIAS e`
+= Oracle refuse `AS` devant un alias de table, alors qu'il l'accepte devant un alias de colonne.
+
+? Comment lister aussi les services qui n'ont aucun employé ?
+- `services s JOIN employes e ON …`
++ `services s LEFT JOIN employes e ON …`
+- `employes e JOIN services s ON …`
+- C'est impossible en SQL
+= Avec `LEFT JOIN`, toutes les lignes de `services` sont gardées, même sans employé correspondant.
+
+? Combien de lignes renvoie `SELECT * FROM employes, services;` sans condition ?
+- 5
+- 4
+- 9
++ 20
+= Sans condition, c'est un produit cartésien : 5 × 4 = 20 lignes.
+
+? Dans l'auto-jointure de la leçon, pourquoi utiliser LEFT JOIN plutôt que JOIN ?
+- Pour aller plus vite
++ Pour garder MBARGA, qui n'a pas de manager
+- Parce que JOIN est interdit sur une même table
+- Pour trier les résultats
+= MBARGA a `id_manager` à NULL : un `JOIN` l'éliminerait du résultat.
+
+=== EXERCICES
+?? Affichez le nom de chaque employé avec le nom de son service.
+>> SELECT e.nom, s.nom AS service FROM employes e JOIN services s ON s.id_service = e.id_service
+~ `FROM employes e JOIN services s ON s.id_service = e.id_service`
+
+?? Affichez le nom des employés qui travaillent à Douala.
+>> SELECT e.nom FROM employes e JOIN services s ON s.id_service = e.id_service WHERE s.ville = 'Douala'
+
+?? Affichez chaque employé avec le nom de son manager, sans oublier MBARGA qui n'en a pas.
+>> SELECT e.nom AS employe, m.nom AS manager FROM employes e LEFT JOIN employes m ON m.id_employe = e.id_manager
+~ Joignez EMPLOYES à elle-même avec deux alias, et un `LEFT JOIN`.
+
+?? Affichez le nombre d'employés par ville.
+>> SELECT s.ville, COUNT(*) AS nb FROM employes e JOIN services s ON s.id_service = e.id_service GROUP BY s.ville
+~ Une jointure, puis un `GROUP BY s.ville`.

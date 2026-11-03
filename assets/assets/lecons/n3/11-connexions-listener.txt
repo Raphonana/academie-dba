@@ -1,0 +1,82 @@
+# Les connexions et le listener
+@duree 9
+@resume Listener, services, tnsnames.ora, Easy Connect et les erreurs ORA-12xxx.
+
+## Le chemin d'une connexion
+Une application sur une autre machine ne parle pas directement à l'instance. Elle contacte d'abord le **listener**, un programme qui écoute sur un port réseau (1521 par défaut) :
+- le client demande un **service**, par exemple `PRODCM` ;
+- le listener vérifie qu'une instance offre ce service, puis lui passe la connexion ;
+- un processus serveur dédié est créé pour la session ; le listener n'intervient plus.
+Le listener peut donc s'arrêter sans couper les sessions déjà connectées : seules les **nouvelles** connexions échouent.
+
+## Les commandes du listener
+```sql
+$ lsnrctl status       -- état, ports, services connus
+$ lsnrctl start
+$ lsnrctl stop
+```
+Sa configuration est dans `$ORACLE_HOME/network/admin/listener.ora`. Les instances s'y **enregistrent** d'elles-mêmes grâce au processus LREG, en moins d'une minute après le démarrage. `ALTER SYSTEM REGISTER;` force un enregistrement immédiat.
+
+## Comment le client décrit la base
+- **Easy Connect** : `sqlplus app_rh@srv-ora-prod01:1521/PRODCM`, soit hôte:port/service ;
+- **tnsnames.ora** : un alias qui décrit l'adresse, sur le poste client :
+```sql
+PRODCM =
+  (DESCRIPTION =
+    (ADDRESS = (PROTOCOL = TCP)(HOST = srv-ora-prod01)(PORT = 1521))
+    (CONNECT_DATA = (SERVICE_NAME = PRODCM)))
+```
+> Préférez `SERVICE_NAME` à l'ancien `SID` : un service peut changer d'instance (RAC, Data Guard) sans que les applications le sachent.
+
+## Les erreurs qu'on rencontre tous les jours
+- **ORA-12541: TNS:no listener** : rien n'écoute sur ce port. Le listener est arrêté, ou mauvais port, ou pare-feu ;
+- **ORA-12514: TNS:listener does not currently know of service requested** : le listener tourne, mais aucune instance n'a enregistré ce service. Base arrêtée, nom de service faux, ou instance pas encore enregistrée ;
+- **ORA-12154: TNS:could not resolve the connect identifier** : l'alias n'existe pas dans le tnsnames.ora du client ;
+- **ORA-01017: invalid username/password; logon denied** : on arrive bien à la base, mais l'identifiant est faux ;
+- **ORA-28000: the account is locked** : le compte est verrouillé.
+
+=== EXERCICES
+?? Affichez, pour chaque machine cliente, le nombre de sessions utilisateur connectées.
+>> SELECT machine, COUNT(*) FROM v$session WHERE type = 'USER' GROUP BY machine
+
+?? Affichez le numéro, la machine et le programme des sessions de l'utilisateur APP_VENTES.
+>> SELECT sid, machine, program FROM v$session WHERE username = 'APP_VENTES'
+
+?? Affichez le nom d'utilisateur et l'heure de connexion de la session connectée depuis le plus longtemps parmi les sessions utilisateur.
+>> SELECT username, logon_time FROM v$session WHERE type = 'USER' ORDER BY logon_time FETCH FIRST 1 ROWS ONLY
+
+=== QUIZ
+? Le listener est arrêté. Que deviennent les sessions déjà connectées ?
+- Elles sont coupées
++ Elles continuent normalement ; seules les nouvelles connexions échouent
+- Elles se figent jusqu'au redémarrage du listener
+- Elles basculent sur une autre base
+= Le listener ne sert qu'à établir la connexion.
+
+? Un client reçoit ORA-12514. Que savez-vous ?
+- Le listener est arrêté
++ Le listener répond, mais ne connaît pas le service demandé
+- Le mot de passe est faux
+- Le tnsnames.ora est absent
+= Base arrêtée, service mal orthographié, ou instance pas encore enregistrée auprès du listener.
+
+? Que signifie ORA-12541 ?
++ Aucun listener n'écoute à l'adresse demandée
+- Le compte est verrouillé
+- La base est en MOUNT
+- Le service est inconnu
+= Vérifiez le listener, le port et le pare-feu.
+
+? Quelle chaîne est une connexion Easy Connect correcte ?
+- `app_rh@PRODCM.tns`
++ `app_rh@srv-ora-prod01:1521/PRODCM`
+- `app_rh://srv-ora-prod01/1521`
+- `app_rh@1521:PRODCM`
+= Hôte, deux-points, port, barre oblique, nom de service.
+
+? Juste après le démarrage de la base, les applications reçoivent ORA-12514 pendant quelques secondes. Pourquoi ?
+- Le listener redémarre aussi
++ L'instance n'a pas encore enregistré ses services auprès du listener
+- Les comptes sont verrouillés au démarrage
+- Les sessions attendent la récupération d'instance
+= LREG enregistre l'instance dans la minute. `ALTER SYSTEM REGISTER` force l'enregistrement.

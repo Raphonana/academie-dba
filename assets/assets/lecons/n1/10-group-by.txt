@@ -1,0 +1,98 @@
+# Agréger : COUNT, SUM, GROUP BY
+@duree 9
+@resume Compter, additionner, regrouper par service et filtrer les groupes avec HAVING.
+
+## Les fonctions d'agrégation
+Elles prennent **plusieurs lignes** et renvoient **une seule valeur** :
+- `COUNT(*)` compte les lignes ;
+- `COUNT(colonne)` compte les valeurs **non NULL** de la colonne ;
+- `SUM`, `AVG`, `MIN` et `MAX` donnent la somme, la moyenne, le minimum et le maximum.
+```sql
+SELECT COUNT(*), SUM(salaire), AVG(salaire), MAX(salaire)
+FROM   employes;
+-- 5 | 4250000 | 850000 | 1500000
+```
+> Les fonctions d'agrégation ignorent les NULL. `COUNT(prime)` vaut 2, et `AVG(prime)` vaut 75 000 : c'est la moyenne des deux primes, pas une division par 5.
+
+## Regrouper : GROUP BY
+Pour avoir un résultat **par service**, on regroupe les lignes :
+```sql
+SELECT id_service, COUNT(*) AS nb, SUM(salaire) AS masse
+FROM   employes
+GROUP  BY id_service
+ORDER  BY id_service;
+```
+Le service 20 donne `nb = 2` et `masse = 1 550 000` ; les services 10, 30 et 40 ont un employé chacun.
+! Règle d'or : toute colonne du `SELECT` qui n'est pas dans une fonction d'agrégation doit figurer dans le `GROUP BY`. Sinon : **ORA-00979: not a GROUP BY expression**.
+
+## Filtrer les groupes : HAVING
+`WHERE` filtre les lignes **avant** le regroupement ; `HAVING` filtre les groupes **après**.
+```sql
+SELECT id_service, AVG(salaire)
+FROM   employes
+WHERE  salaire > 500000          -- on écarte d'abord certaines lignes
+GROUP  BY id_service
+HAVING COUNT(*) >= 2;            -- puis on garde les groupes d'au moins 2
+```
+On ne peut pas écrire `WHERE COUNT(*) >= 2` : Oracle répond **ORA-00934: group function is not allowed here**.
+
+## L'ordre d'exécution
+Oracle traite une requête dans cet ordre, qui explique beaucoup d'erreurs :
+- `FROM` : quelles tables ;
+- `WHERE` : quelles lignes ;
+- `GROUP BY` : quels groupes ;
+- `HAVING` : quels groupes garder ;
+- `SELECT` : quelles colonnes et quels alias ;
+- `ORDER BY` : dans quel ordre.
+C'est pourquoi un alias du `SELECT` est utilisable dans `ORDER BY`, mais pas dans `WHERE`.
+
+=== QUIZ
+? Sur notre table, que vaut `COUNT(prime)` ?
+- 5
++ 2
+- 0
+- NULL
+= `COUNT(colonne)` ne compte que les valeurs non NULL : seuls NGO et BELLO ont une prime.
+
+? Quelle erreur provoque `SELECT id_service, nom, COUNT(*) FROM employes GROUP BY id_service;` ?
+- ORA-00942
++ ORA-00979: not a GROUP BY expression
+- ORA-00001
+- Aucune
+= `nom` n'est ni agrégé ni dans le `GROUP BY`. Oracle ne sait pas quel nom afficher pour un groupe de plusieurs employés.
+
+? Où mettre la condition « services ayant plus d'un employé » ?
+- Dans le WHERE
++ Dans le HAVING
+- Dans le ORDER BY
+- Dans le FROM
+= Une condition sur un résultat d'agrégation (`COUNT(*) > 1`) se met dans `HAVING`.
+
+? Quelle est la masse salariale du service 20 ?
+- 900 000
+- 650 000
++ 1 550 000
+- 775 000
+= NGO (900 000) + FOTSO (650 000) = 1 550 000. 775 000 est la moyenne.
+
+? Pourquoi `WHERE salaire_annuel > 10000000` échoue-t-il si `salaire_annuel` est un alias du SELECT ?
+- Parce que les alias sont interdits
++ Parce que le WHERE est évalué avant le SELECT, l'alias n'existe pas encore
+- Parce qu'il faut des guillemets
+- Parce que la valeur est trop grande
+= Oracle évalue `WHERE` avant `SELECT`. Répétez l'expression (`salaire * 12`) dans le `WHERE`.
+
+=== EXERCICES
+?? Affichez en une ligne le nombre d'employés et la masse salariale totale.
+>> SELECT COUNT(*), SUM(salaire) FROM employes
+
+?? Affichez, pour chaque service, son numéro et son nombre d'employés.
+>> SELECT id_service, COUNT(*) FROM employes GROUP BY id_service
+~ Toute colonne non agrégée du SELECT doit être dans le GROUP BY.
+
+?? Affichez le numéro et la masse salariale des services dont la masse salariale dépasse 1 000 000.
+>> SELECT id_service, SUM(salaire) AS masse FROM employes GROUP BY id_service HAVING SUM(salaire) > 1000000
+~ Une condition sur un SUM se met dans `HAVING`, pas dans `WHERE`.
+
+?? Affichez le salaire moyen, le plus petit et le plus grand salaire.
+>> SELECT AVG(salaire), MIN(salaire), MAX(salaire) FROM employes

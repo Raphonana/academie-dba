@@ -1,0 +1,108 @@
+# Procédures et fonctions stockées
+@duree 10
+@resume Enregistrer du code dans la base, les paramètres IN / OUT, et appeler une fonction en SQL.
+
+## Du bloc anonyme au sous-programme
+Un bloc anonyme disparaît après son exécution. Une **procédure** ou une **fonction** stockée est compilée et enregistrée dans la base, sous un nom, dans un schéma. Toutes les applications peuvent l'appeler, et on peut donner le droit de l'exécuter sans donner accès aux tables.
+
+## La procédure
+```sql
+CREATE OR REPLACE PROCEDURE augmenter (
+  p_service IN  employes.id_service%TYPE,
+  p_taux    IN  NUMBER DEFAULT 0.05,
+  p_nb      OUT NUMBER
+) AS
+BEGIN
+  UPDATE employes
+  SET    salaire = salaire * (1 + p_taux)
+  WHERE  id_service = p_service;
+  p_nb := SQL%ROWCOUNT;
+END augmenter;
+/
+```
+- `IN` (par défaut) : valeur transmise à la procédure, en lecture seule ;
+- `OUT` : valeur renvoyée à l'appelant ;
+- `IN OUT` : les deux ;
+- `DEFAULT` : le paramètre devient facultatif.
+Appel depuis un bloc :
+```sql
+DECLARE
+  v_nb NUMBER;
+BEGIN
+  augmenter(p_service => 20, p_nb => v_nb);   -- notation nommée
+  DBMS_OUTPUT.PUT_LINE(v_nb || ' employés augmentés');
+END;
+```
+> Dans SQL*Plus, `EXEC nom_procedure(…)` est un raccourci pour `BEGIN nom_procedure(…); END;`.
+! Une procédure ne fait pas de COMMIT toute seule : c'est en général à l'appelant de décider quand valider. Évitez de mettre des COMMIT au milieu de vos procédures.
+
+## La fonction
+Une fonction **renvoie une valeur** avec `RETURN` :
+```sql
+CREATE OR REPLACE FUNCTION anciennete (p_id employes.id_employe%TYPE)
+  RETURN NUMBER
+AS
+  v_date employes.date_embauche%TYPE;
+BEGIN
+  SELECT date_embauche INTO v_date FROM employes WHERE id_employe = p_id;
+  RETURN TRUNC(MONTHS_BETWEEN(SYSDATE, v_date) / 12);
+END anciennete;
+/
+```
+Une fonction peut être appelée **dans du SQL**, comme une fonction intégrée :
+```sql
+SELECT nom, anciennete(id_employe) AS ans FROM employes;
+```
+Pour cela, elle ne doit pas modifier de données (sinon ORA-14551) et ses paramètres doivent être IN.
+
+## Les erreurs de compilation
+Quand la compilation échoue, SQL*Plus affiche seulement « Warning: Procedure created with compilation errors ». Pour voir les erreurs :
+```sql
+SHOW ERRORS
+SELECT line, text FROM user_errors WHERE name = 'AUGMENTER';
+```
+Un objet qui ne compile pas, ou dont une table a changé, devient **INVALID** dans `USER_OBJECTS`. Oracle tente de le recompiler au prochain appel.
+
+=== QUIZ
+? Quelle est la différence principale entre une procédure et une fonction ?
+- La fonction est plus rapide
++ La fonction renvoie une valeur avec RETURN et peut s'utiliser dans une expression
+- La procédure ne peut pas avoir de paramètres
+- La fonction ne peut pas lire de table
+= Une procédure s'appelle comme une instruction, une fonction comme une valeur.
+
+? Que signifie un paramètre OUT ?
+- Il est facultatif
++ Il sert à renvoyer une valeur à l'appelant
+- Il est en lecture seule
+- Il est supprimé après l'appel
+= IN entre, OUT sort, IN OUT fait les deux.
+
+? Que fait cet appel ?
+| augmenter(p_service => 20, p_nb => v_nb);
++ Il appelle la procédure avec le taux par défaut de 5 % et récupère le nombre de lignes dans v_nb
+- Il échoue car p_taux est manquant
+- Il compare p_service à 20
+- Il crée la procédure
+= `=>` est la notation nommée. p_taux, qui a une valeur DEFAULT, peut être omis.
+
+? Peut-on utiliser une fonction stockée dans un SELECT ?
+- Non, jamais
++ Oui, si elle ne modifie pas de données
+- Oui, seulement dans le WHERE
+- Seulement si elle s'appelle F_ quelque chose
+= Comme UPPER ou ROUND. Une fonction qui fait un UPDATE appelée depuis un SELECT lève ORA-14551.
+
+? SQL*Plus affiche « Procedure created with compilation errors ». Comment voir les erreurs ?
+- Avec DESCRIBE
++ Avec SHOW ERRORS, ou en interrogeant USER_ERRORS
+- Avec un ROLLBACK
+- Dans le fichier alert.log
+= La procédure est enregistrée mais INVALID. SHOW ERRORS donne les lignes et les messages.
+
+? Une procédure stockée fait-elle un COMMIT automatique à la fin ?
+- Oui, toujours
++ Non : la transaction reste ouverte, c'est l'appelant qui valide ou annule
+- Oui, sauf en cas d'erreur
+- Seulement si elle contient un INSERT
+= Comme tout code PL/SQL, elle travaille dans la transaction de l'appelant.

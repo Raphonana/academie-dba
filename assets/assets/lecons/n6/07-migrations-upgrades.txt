@@ -1,0 +1,101 @@
+# Migrations et mises à niveau
+@duree 10
+@resume AutoUpgrade, point de restauration garanti, COMPATIBLE, et les migrations à arrêt minimal.
+
+## Mise à niveau ou migration ?
+- une **mise à niveau** (upgrade) change la **version** d'Oracle sur la même base : de 19c vers 23ai, par exemple ;
+- une **migration** déplace la base vers un autre serveur, une autre plateforme (de Windows vers Linux, d'un serveur vers le cloud), ou un autre format (de non-CDB vers PDB).
+Les deux se combinent souvent, et se préparent pendant des semaines.
+
+## AutoUpgrade
+L'outil **AutoUpgrade**, fourni par Oracle, automatise toute la mise à niveau : vérifications préalables, corrections, mise à niveau, recompilation, contrôles finaux, et conversion en PDB si besoin.
+```sql
+$ java -jar autoupgrade.jar -config prodcm.cfg -mode analyze   -- rapport, sans rien toucher
+$ java -jar autoupgrade.jar -config prodcm.cfg -mode fixups
+$ java -jar autoupgrade.jar -config prodcm.cfg -mode deploy
+```
+Le mode **analyze** se lance des semaines à l'avance, sans aucun risque : il liste tout ce qui posera problème.
+
+## Pouvoir revenir en arrière
+Avant toute mise à niveau, on crée un **point de restauration garanti** :
+```sql
+CREATE RESTORE POINT avant_maj GUARANTEE FLASHBACK DATABASE;
+```
+Si la mise à niveau échoue, ou si l'application ne fonctionne pas avec la nouvelle version, on revient en quelques minutes à l'état exact d'avant :
+```sql
+SHUTDOWN IMMEDIATE
+STARTUP MOUNT          -- avec l'ancien ORACLE_HOME
+FLASHBACK DATABASE TO RESTORE POINT avant_maj;
+ALTER DATABASE OPEN RESETLOGS;
+```
+! Le paramètre `COMPATIBLE` fixe les fonctionnalités que la base s'autorise à utiliser sur disque. Tant qu'on ne l'a pas augmenté, le retour arrière reste possible. Une fois augmenté, **plus de retour** à l'ancienne version, ni de flashback avant ce point. On le monte seulement après plusieurs jours, voire semaines, sans problème. Et on supprime le point de restauration garanti : il empêche la FRA de se vider.
+
+## Migrer avec un arrêt minimal
+- **Data Pump** : simple et universel, mais l'arrêt dure le temps de l'export et de l'import, souvent des heures pour une grosse base ;
+- **tablespaces transportables** : on copie les fichiers de données et on importe seulement les métadonnées. Avec des sauvegardes incrémentales préalables, l'arrêt final se réduit à quelques dizaines de minutes, même pour des téraoctets ;
+- **Data Guard** : une base de secours dans le nouvel environnement, puis un switchover ;
+- **GoldenGate** : une réplication logique entre l'ancienne et la nouvelle base, qui permet une bascule en quelques minutes, même entre versions ou plateformes différentes. Puissant mais payant.
+
+## Tester, tester, tester
+Le risque d'une mise à niveau n'est pas qu'elle échoue, c'est qu'une requête importante change de plan et devienne lente. Testez les traitements critiques sur une copie mise à niveau, et préparez des **SQL Plan Baselines** pour figer les bons plans avant la bascule.
+
+=== EXERCICES
+?? Affichez la valeur du paramètre `compatible` de PRODCM.
+>> SELECT value FROM v$parameter WHERE name = 'compatible'
+
+?? Une mise à niveau vers 23ai imposera de convertir PRODCM en PDB. Affichez la colonne qui le confirme dans V$DATABASE, avec le nom de la base.
+>> SELECT name, cdb FROM v$database
+
+=== INCIDENT
+# La nuit de la mise à niveau
+@contexte Samedi soir, mise à niveau de la base de recette RECETTE19 vers 23ai, avant celle de la production le mois prochain. Le point de restauration garanti AVANT_MAJ a été créé à 20 h. À 23 h, AutoUpgrade a terminé, mais le traitement de facturation tourne trois fois plus lentement qu'avant.
+?! Que regardez-vous ?
++ Le plan de la requête principale de la facturation, comparé à celui d'avant la mise à niveau => Le nouvel optimiseur a choisi un plan différent, avec un parcours complet sur la plus grosse table.
+- La taille de la SGA => Elle n'a pas changé, et le symptôme touche une requête précise.
+- Les sauvegardes => Sans rapport avec le ralentissement.
+?! Il est 23 h 30 et la recette doit reprendre lundi matin. Quelles options avez-vous ?
++ Figer l'ancien plan avec une SQL Plan Baseline, ou revenir en arrière avec le point de restauration si vous n'y arrivez pas => L'ancien plan, capturé avant la mise à niveau dans un SQL Tuning Set, se charge comme baseline : la facturation retrouve son temps habituel.
+- Augmenter le paramètre COMPATIBLE pour profiter du nouvel optimiseur => COMPATIBLE ne règle pas les plans, et une fois augmenté, le retour arrière devient impossible.
+- Supprimer le point de restauration pour libérer de la place => Vous perdriez votre seule porte de sortie en pleine nuit d'incident.
+?! La recette valide la nouvelle version au bout de deux semaines. Que faites-vous du point de restauration garanti ?
++ Vous le supprimez, puis vous planifiez l'augmentation de COMPATIBLE => `DROP RESTORE POINT avant_maj;` libère la FRA, qui ne pouvait plus se vider. Le retour arrière n'étant plus nécessaire, COMPATIBLE peut monter.
+- Vous le gardez indéfiniment, au cas où => Un point garanti empêche Oracle de supprimer les journaux de flashback : la FRA finit par se remplir et figer la base.
+?! Quelle leçon tirez-vous pour la production ?
++ Capturer les plans des requêtes critiques avant la mise à niveau, et prévoir le temps de les vérifier pendant la nuit d'intervention => Avec les baselines préparées à l'avance et un test de la facturation dans le planning, la mise à niveau de la production se déroulera sans surprise.
+- Ne jamais mettre à niveau => La 19c finira par ne plus recevoir de correctifs de sécurité.
+
+=== QUIZ
+? Que fait le mode analyze d'AutoUpgrade ?
++ Il vérifie la base et liste les problèmes, sans rien modifier
+- Il fait la mise à niveau
+- Il sauvegarde la base
+- Il convertit en PDB
+= On le lance des semaines à l'avance, sans aucun risque.
+
+? À quoi sert un point de restauration garanti avant une mise à niveau ?
+- À accélérer la mise à niveau
++ À revenir en quelques minutes à l'état exact d'avant si quelque chose tourne mal
+- À sauvegarder les fichiers de paramètres
+- À figer les plans d'exécution
+= FLASHBACK DATABASE TO RESTORE POINT, puis OPEN RESETLOGS.
+
+? Pourquoi attendre avant d'augmenter COMPATIBLE ?
+- Parce que c'est lent
++ Parce qu'une fois augmenté, le retour à l'ancienne version devient impossible
+- Parce qu'il faut redémarrer le serveur
+- Ce n'est pas nécessaire
+= On le monte après plusieurs jours ou semaines sans problème.
+
+? Quelle méthode permet de migrer une très grosse base avec un arrêt de quelques dizaines de minutes ?
+- Un export Data Pump complet
++ Les tablespaces transportables avec sauvegardes incrémentales, ou Data Guard, ou GoldenGate
+- Une copie des fichiers base ouverte
+- Une restauration RMAN classique
+= Data Pump seul impose un arrêt aussi long que l'export et l'import.
+
+? Quel est le risque principal d'une mise à niveau réussie techniquement ?
++ Des plans d'exécution qui changent et des requêtes importantes qui ralentissent
+- La perte des données
+- La perte des utilisateurs
+- La corruption des index
+= D'où l'importance des tests et des SQL Plan Baselines préparées à l'avance.

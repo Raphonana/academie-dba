@@ -1,0 +1,95 @@
+# Les packages
+@duree 9
+@resume Spécification et corps, encapsulation, variables de session et l'erreur ORA-04068.
+
+## Ranger le code
+Une application réelle contient des centaines de procédures. Un **package** regroupe les procédures, fonctions, types et variables qui vont ensemble : tout ce qui concerne la paie, tout ce qui concerne la facturation… Dans les grandes bases, presque tout le PL/SQL est en packages.
+
+## Deux parties
+La **spécification** (le « contrat ») déclare ce qui est visible de l'extérieur :
+```sql
+CREATE OR REPLACE PACKAGE paie AS
+  c_taux_defaut CONSTANT NUMBER := 0.05;
+  PROCEDURE augmenter (p_service NUMBER, p_taux NUMBER DEFAULT c_taux_defaut);
+  FUNCTION  masse (p_service NUMBER) RETURN NUMBER;
+END paie;
+/
+```
+Le **corps** (body) contient le code, et peut avoir des éléments **privés**, invisibles de l'extérieur :
+```sql
+CREATE OR REPLACE PACKAGE BODY paie AS
+  PROCEDURE journaliser (p_msg VARCHAR2) IS   -- privée : absente de la spécification
+  BEGIN
+    INSERT INTO journal (date_evt, message) VALUES (SYSDATE, p_msg);
+  END;
+
+  PROCEDURE augmenter (p_service NUMBER, p_taux NUMBER DEFAULT c_taux_defaut) IS
+  BEGIN
+    UPDATE employes SET salaire = salaire * (1 + p_taux) WHERE id_service = p_service;
+    journaliser(SQL%ROWCOUNT || ' salaires augmentés, service ' || p_service);
+  END;
+
+  FUNCTION masse (p_service NUMBER) RETURN NUMBER IS
+    v NUMBER;
+  BEGIN
+    SELECT SUM(salaire) INTO v FROM employes WHERE id_service = p_service;
+    RETURN v;
+  END;
+END paie;
+/
+```
+On appelle les éléments publics avec le préfixe du package : `paie.augmenter(20);`, `SELECT paie.masse(20) FROM dual;`.
+
+## Pourquoi c'est mieux
+- **Encapsulation** : le détail (`journaliser`) est caché, on peut le changer sans toucher aux appelants ;
+- **Dépendances** : si on modifie seulement le corps, les objets qui utilisent le package ne deviennent pas invalides ;
+- **Performance** : tout le package est chargé en mémoire au premier appel ;
+- **Surcharge** : deux procédures peuvent porter le même nom avec des paramètres différents.
+
+## L'état de session et ORA-04068
+Une variable déclarée au niveau du package (hors procédure) garde sa valeur **pendant toute la session** : c'est l'**état** du package.
+! Si quelqu'un recompile le package pendant que des sessions l'utilisent, leur état est perdu, et leur prochain appel échoue avec **ORA-04068: existing state of packages has been discarded**. C'est un incident classique lors d'une mise en production en journée. Les packages sans variables globales n'ont pas ce problème.
+> `PRAGMA SERIALLY_REUSABLE` (l'état ne dure que le temps d'un appel) ou l'*edition-based redefinition* (depuis la 11g R2) permettent de limiter ce risque. Nous en reparlerons au niveau Senior.
+
+=== QUIZ
+? Quelles sont les deux parties d'un package ?
+- Le header et le footer
++ La spécification et le corps (body)
+- La déclaration et l'exception
+- La table et la vue
+= La spécification déclare ce qui est public, le corps contient le code.
+
+? Une procédure présente dans le corps mais pas dans la spécification est…
+- Une erreur de compilation
++ Privée : utilisable seulement à l'intérieur du package
+- Publique
+- Supprimée à la compilation
+= C'est l'encapsulation : l'extérieur ne voit que la spécification.
+
+? Comment appeler la fonction masse du package paie dans un SELECT ?
+- `SELECT masse(20) FROM dual;`
++ `SELECT paie.masse(20) FROM dual;`
+- `SELECT paie(masse, 20) FROM dual;`
+- `EXEC paie.masse(20);`
+= On préfixe par le nom du package : paquet.element.
+
+? On modifie seulement le corps d'un package. Les procédures qui l'appellent deviennent-elles invalides ?
+- Oui, toutes
++ Non : elles dépendent de la spécification, qui n'a pas changé
+- Oui, mais seulement les fonctions
+- Seulement si le package a des curseurs
+= C'est un grand avantage des packages pour la maintenance.
+
+? Des utilisateurs reçoivent ORA-04068 juste après une mise en production. Cause probable ?
+- La base est pleine
+- Un utilisateur a fait ROLLBACK
++ Un package avec des variables de session a été recompilé pendant que leurs sessions l'utilisaient
+- Le réseau est coupé
+= L'état du package a été jeté. Un nouvel appel dans la même session fonctionne en général, mais l'erreur a déjà atteint l'utilisateur.
+
+? Que garde une variable déclarée au niveau du package, en dehors de toute procédure ?
+- Sa valeur pendant un seul appel
++ Sa valeur pendant toute la session
+- Sa valeur pour toutes les sessions de la base
+- Rien, c'est interdit
+= Chaque session a sa propre copie, qui vit jusqu'à la déconnexion.

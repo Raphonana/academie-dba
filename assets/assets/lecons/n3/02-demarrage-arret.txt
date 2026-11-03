@@ -1,0 +1,96 @@
+# Démarrer et arrêter une base
+@duree 9
+@resume NOMOUNT, MOUNT, OPEN, et les quatre façons d'arrêter.
+
+## Trois étapes de démarrage
+`STARTUP` enchaîne trois étapes, que l'on peut aussi faire une par une :
+- **NOMOUNT** : Oracle lit le fichier de paramètres (spfile), réserve la SGA et lance les processus. L'instance existe, mais ne connaît encore aucune base. Étape utilisée pour créer une base ou restaurer un fichier de contrôle ;
+- **MOUNT** : Oracle ouvre les **fichiers de contrôle**, qui décrivent la base. Il sait où sont les fichiers de données, mais ne les ouvre pas. Étape utilisée pour renommer des fichiers, activer l'archivage ou faire une restauration ;
+- **OPEN** : Oracle ouvre les fichiers de données et les redo. Les utilisateurs peuvent se connecter.
+```sql
+SQL> STARTUP NOMOUNT
+SQL> ALTER DATABASE MOUNT;
+SQL> ALTER DATABASE OPEN;
+```
+> `V$INSTANCE.STATUS` vaut `STARTED` en NOMOUNT, `MOUNTED` en MOUNT et `OPEN` une fois la base ouverte.
+
+## Quatre façons d'arrêter
+- `SHUTDOWN NORMAL` : attend que **tous** les utilisateurs se déconnectent. Peut attendre des heures : presque jamais utilisé ;
+- `SHUTDOWN TRANSACTIONAL` : attend la fin des transactions en cours, puis déconnecte ;
+- `SHUTDOWN IMMEDIATE` : annule les transactions en cours, déconnecte tout le monde, écrit tout sur disque. C'est **l'arrêt standard** ;
+- `SHUTDOWN ABORT` : coupe l'instance net, comme une panne de courant. Rien n'est écrit.
+! Après un `SHUTDOWN ABORT`, la base n'est pas abîmée : au redémarrage, le processus SMON fait une **récupération d'instance** grâce aux fichiers redo. Mais cela prend du temps, et c'est un arrêt de dernier recours : quand IMMEDIATE reste bloqué, par exemple.
+
+## Qui a le droit ?
+Démarrer ou arrêter demande le privilège **SYSDBA** (ou SYSOPER). On se connecte en local avec l'authentification du système d'exploitation :
+```sql
+$ sqlplus / as sysdba
+```
+L'utilisateur Unix doit appartenir au groupe `dba`. À distance, c'est le **fichier de mots de passe** (orapwPRODCM) qui contrôle les connexions SYSDBA.
+
+=== EXERCICES
+?? Affichez l'état de l'instance et l'état de la base.
+>> SELECT status, database_status FROM v$instance
+
+?? Depuis combien de jours entiers l'instance PRODCM tourne-t-elle au 28 octobre 2026 à minuit ? Affichez le nom de l'instance et ce nombre de jours.
+>> SELECT instance_name, TRUNC(DATE '2026-10-28' - startup_time) AS jours FROM v$instance
+~ La différence de deux dates donne des jours, avec des décimales : `TRUNC` garde les jours entiers.
+
+=== INCIDENT
+# La base ne redémarre plus
+@contexte Mardi, 6 h 50. Une coupure de courant a arrêté le serveur srv-ora-prod01 pendant la nuit. L'équipe système l'a rallumé, mais l'application RH affiche « base indisponible ». On vous appelle.
+?! Par où commencez-vous ?
+- Vous relancez le serveur une deuxième fois, au cas où => Le serveur redémarre, la base toujours pas. Vous avez perdu quinze minutes et aucune information.
++ Vous lisez la fin de l'alert log de l'instance => Bon réflexe : l'alert log (`$ORACLE_BASE/diag/rdbms/prodcm/PRODCM/trace/alert_PRODCM.log`) raconte tout ce que l'instance a tenté.
+- Vous recréez la base à partir de la dernière sauvegarde => Beaucoup trop tôt : vous ne savez même pas ce qui ne va pas, et vous risquez de perdre les données de la nuit.
+?! Vous trouvez ces lignes. Qu'est-ce qui bloque ?
+| ORA-00205: error in identifying control file, check alert log for more info
+| ORA-00202: control file: '/u03/fra/PRODCM/control02.ctl'
+| ORA-27037: unable to obtain file status
+| Linux-x86_64 Error: 2: No such file or directory
+- Un fichier de données est corrompu => Non, Oracle n'en est pas encore là : il bloque à l'étape MOUNT, en lisant les fichiers de contrôle.
++ Une des deux copies du fichier de contrôle est introuvable => Exact. Les fichiers de contrôle sont multiplexés, et Oracle exige que **toutes** les copies soient lisibles pour monter la base.
+- Le listener est arrêté => Le listener n'empêche pas l'instance de démarrer. L'erreur porte sur un fichier.
+?! La commande `df -h` montre que le système de fichiers /u03 n'est pas monté. Que faites-vous ?
+- Vous retirez control02.ctl du paramètre control_files et vous démarrez => La base démarrerait, mais avec une seule copie du fichier de contrôle : vous avez supprimé une protection pour gagner cinq minutes. Et /u03 contient aussi les archives et la moitié des redo.
++ Vous demandez à l'équipe système de remonter /u03, puis vous faites STARTUP => Le disque revient, toutes les copies sont lisibles, la base passe en MOUNT puis en OPEN. SMON fait la récupération d'instance automatiquement.
+- Vous restaurez le fichier de contrôle avec RMAN => Inutile : le fichier n'est pas perdu, il est sur un disque qui n'est simplement pas monté. Une restauration ferait perdre du temps et obligerait à ouvrir avec RESETLOGS.
+?! La base est ouverte. Que reste-t-il à faire ?
+- Rien, l'incident est clos => Il manque l'essentiel : vérifier que tout fonctionne, et éviter que cela recommence.
++ Vérifier l'alert log et la connexion des applications, puis demander pourquoi /u03 n'est pas monté au démarrage => Vous vérifiez que la récupération d'instance s'est bien passée et que les applications se reconnectent. Puis vous signalez que /u03 manque dans le montage automatique du serveur : sinon, le problème reviendra à la prochaine coupure.
+
+=== QUIZ
+? Dans quel ordre se fait le démarrage ?
+- OPEN, MOUNT, NOMOUNT
++ NOMOUNT, MOUNT, OPEN
+- MOUNT, NOMOUNT, OPEN
+- NOMOUNT, OPEN, MOUNT
+= D'abord l'instance (paramètres, mémoire, processus), puis les fichiers de contrôle, puis les fichiers de données.
+
+? Quels fichiers Oracle ouvre-t-il à l'étape MOUNT ?
+- Le spfile
++ Les fichiers de contrôle
+- Les fichiers de données
+- L'alert log
+= Le spfile est lu en NOMOUNT, les fichiers de données sont ouverts en OPEN.
+
+? Quel est l'arrêt standard d'une base de production ?
+- SHUTDOWN NORMAL
+- SHUTDOWN ABORT
++ SHUTDOWN IMMEDIATE
+- Couper le serveur
+= IMMEDIATE annule les transactions en cours et arrête proprement. NORMAL peut attendre indéfiniment.
+
+? Après un SHUTDOWN ABORT, que se passe-t-il au redémarrage ?
+- La base est perdue
+- Il faut restaurer la dernière sauvegarde
++ SMON fait une récupération d'instance avec les fichiers redo
+- Rien de particulier
+= Les transactions validées sont rejouées, les autres sont annulées. Aucune donnée validée n'est perdue.
+
+? Quel privilège faut-il pour démarrer une base ?
+- DBA
+- CREATE SESSION
++ SYSDBA ou SYSOPER
+- SELECT ANY TABLE
+= Le rôle DBA ne suffit pas : démarrer et arrêter demande un privilège d'administration.

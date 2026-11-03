@@ -1,0 +1,118 @@
+# Les requêtes hiérarchiques
+@duree 9
+@resume Parcourir un organigramme avec CONNECT BY, puis avec un WITH récursif.
+
+## Une hiérarchie dans une table
+La colonne `id_manager` fait de `EMPLOYES` un arbre : MBARGA est en haut, NGO, ATANGA et BELLO dépendent de lui, et FOTSO dépend de NGO. Les nomenclatures, les catégories de produits ou les plans comptables ont la même forme.
+
+## CONNECT BY, la syntaxe Oracle
+Oracle propose depuis toujours une syntaxe dédiée :
+```sql
+SELECT LEVEL,
+       LPAD(' ', 2 * (LEVEL - 1)) || nom AS organigramme
+FROM   employes
+START  WITH id_manager IS NULL
+CONNECT BY PRIOR id_employe = id_manager
+ORDER  SIBLINGS BY nom;
+```
+- `START WITH` : la ou les racines de l'arbre ;
+- `CONNECT BY PRIOR id_employe = id_manager` : l'enfant est la ligne dont le `id_manager` vaut le `id_employe` de la ligne **précédente** (PRIOR) ;
+- `LEVEL` : la profondeur, 1 pour la racine ;
+- `ORDER SIBLINGS BY` : trie les frères sans casser l'arbre.
+```sql
+1  MBARGA
+2    ATANGA
+2    BELLO
+2    NGO
+3      FOTSO
+```
+Autres outils utiles : `SYS_CONNECT_BY_PATH(nom, '/')` donne le chemin complet (`/MBARGA/NGO/FOTSO`), `CONNECT_BY_ISLEAF` vaut 1 pour les feuilles, et `CONNECT_BY_ROOT nom` donne la racine.
+! Si les données contiennent une boucle (A manager de B, B manager de A), Oracle lève ORA-01436. `CONNECT BY NOCYCLE` permet de continuer malgré tout.
+
+## Le WITH récursif, la syntaxe standard
+Depuis la version 11g R2, Oracle accepte aussi la syntaxe de la norme SQL, qu'on retrouve dans les autres SGBD :
+```sql
+WITH h (id_employe, nom, niveau) AS (
+  SELECT id_employe, nom, 1
+  FROM   employes
+  WHERE  id_manager IS NULL               -- la racine
+  UNION ALL
+  SELECT e.id_employe, e.nom, h.niveau + 1
+  FROM   employes e
+  JOIN   h ON e.id_manager = h.id_employe -- les enfants
+)
+SELECT nom, niveau FROM h;
+```
+La première partie donne le point de départ ; la seconde se joint à `h` lui-même et ajoute un niveau à chaque tour, jusqu'à ce qu'il n'y ait plus d'enfant.
+> Dans Oracle, la liste des colonnes après le nom (`h (id_employe, nom, niveau)`) est **obligatoire** pour un WITH récursif.
+> Le bac à sable de l'application ne simule pas `CONNECT BY` : les exercices utilisent le WITH récursif. Sur un vrai Oracle, les deux écritures fonctionnent.
+
+=== EXERCICES
+?? Avec un WITH récursif, affichez le nom et le niveau hiérarchique de chaque employé (1 pour MBARGA).
+>> WITH h (id_employe, nom, niveau) AS (
+>>   SELECT id_employe, nom, 1 FROM employes WHERE id_manager IS NULL
+>>   UNION ALL
+>>   SELECT e.id_employe, e.nom, h.niveau + 1 FROM employes e JOIN h ON e.id_manager = h.id_employe
+>> )
+>> SELECT nom, niveau FROM h
+~ Partez de `WHERE id_manager IS NULL`, puis joignez les employés dont le manager est déjà dans h.
+
+?? Affichez le nom de tous les subordonnés de NGO (n° 2), directs ou indirects, sans NGO lui-même.
+>> WITH h (id_employe, nom) AS (
+>>   SELECT id_employe, nom FROM employes WHERE id_manager = 2
+>>   UNION ALL
+>>   SELECT e.id_employe, e.nom FROM employes e JOIN h ON e.id_manager = h.id_employe
+>> )
+>> SELECT nom FROM h
+~ La racine est cette fois « les employés dont le manager est 2 ».
+
+?? Affichez le nom de chaque employé et le chemin qui mène à lui depuis le sommet, sous la forme `MBARGA/NGO/FOTSO`.
+>> WITH h (id_employe, nom, chemin) AS (
+>>   SELECT id_employe, nom, nom FROM employes WHERE id_manager IS NULL
+>>   UNION ALL
+>>   SELECT e.id_employe, e.nom, h.chemin || '/' || e.nom FROM employes e JOIN h ON e.id_manager = h.id_employe
+>> )
+>> SELECT nom, chemin FROM h
+~ À chaque niveau, collez `'/'` et le nom de l'enfant au chemin du parent.
+
+=== QUIZ
+? Dans `CONNECT BY PRIOR id_employe = id_manager`, que désigne PRIOR ?
++ La ligne parente, déjà trouvée au niveau précédent
+- La ligne suivante
+- La première ligne de la table
+- La racine de l'arbre
+= On cherche les lignes dont id_manager vaut l'id_employe de la ligne parente.
+
+? Que vaut LEVEL pour la racine de l'arbre ?
+- 0
++ 1
+- NULL
+- Le nombre total de niveaux
+= La racine est au niveau 1, ses enfants au niveau 2, etc.
+
+? Que fait ORDER SIBLINGS BY nom ?
+- Il trie toutes les lignes par nom en cassant la hiérarchie
++ Il trie par nom les enfants d'un même parent, sans casser l'arbre
+- Il trie par niveau
+- Il supprime les doublons
+= Un ORDER BY classique mélangerait les niveaux. SIBLINGS garde l'affichage en arbre.
+
+? Que manque-t-il à ce WITH récursif pour qu'Oracle l'accepte ?
+| WITH h AS (
+|   SELECT id_employe, nom FROM employes WHERE id_manager IS NULL
+|   UNION ALL
+|   SELECT e.id_employe, e.nom FROM employes e JOIN h ON e.id_manager = h.id_employe
+| )
+| SELECT * FROM h;
+- Le mot RECURSIVE après WITH
++ La liste des colonnes : `WITH h (id_employe, nom) AS (…)`
+- Un ORDER BY
+- Un START WITH
+= Oracle exige la liste des colonnes pour un WITH récursif. Il n'utilise pas le mot RECURSIVE.
+
+? Quelle erreur signale une boucle dans une hiérarchie parcourue avec CONNECT BY ?
+- ORA-00001
+- ORA-01427
++ ORA-01436
+- ORA-00942
+= « CONNECT BY loop in user data ». `NOCYCLE` permet de l'ignorer.

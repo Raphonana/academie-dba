@@ -1,0 +1,103 @@
+# MERGE et modifications avancées
+@duree 8
+@resume UPDATE et DELETE avec sous-requête, MERGE pour fusionner, INSERT ALL.
+
+## Modifier avec une sous-requête
+Le `WHERE` d'un `UPDATE` ou d'un `DELETE` accepte des sous-requêtes, ce qui évite de recopier des numéros à la main :
+```sql
+-- +5 % pour tous les employés de Douala
+UPDATE employes
+SET    salaire = salaire * 1.05
+WHERE  id_service IN (SELECT id_service FROM services WHERE ville = 'Douala');
+```
+La nouvelle valeur peut elle aussi venir d'une sous-requête corrélée :
+```sql
+-- Chaque employé reçoit une prime de 5 % de la masse de son service
+UPDATE employes e
+SET    prime = (SELECT ROUND(SUM(x.salaire) * 0.05)
+                FROM   employes x
+                WHERE  x.id_service = e.id_service);
+```
+
+## MERGE : insérer ou mettre à jour
+Cas très courant : on reçoit un fichier de salaires. Les employés qui existent déjà doivent être mis à jour, les nouveaux doivent être créés. `MERGE` fait les deux en une instruction :
+```sql
+MERGE INTO employes e
+USING (SELECT id_employe, nom, salaire FROM import_salaires) i
+ON    (e.id_employe = i.id_employe)
+WHEN MATCHED THEN
+  UPDATE SET e.salaire = i.salaire
+WHEN NOT MATCHED THEN
+  INSERT (id_employe, nom, salaire, id_service)
+  VALUES (i.id_employe, i.nom, i.salaire, 40);
+```
+- `USING` : la source (une table, une vue ou une sous-requête) ;
+- `ON` : la condition qui dit si la ligne existe déjà, **entre parenthèses** ;
+- `WHEN MATCHED` : ce qu'on fait si elle existe ; on peut y ajouter `DELETE WHERE …` ;
+- `WHEN NOT MATCHED` : ce qu'on fait sinon.
+! Si une ligne de la cible correspond à plusieurs lignes de la source, Oracle lève **ORA-30926: unable to get a stable set of rows in the source tables**. La source doit être unique sur la clé du ON.
+> On ne peut pas modifier dans le `UPDATE SET` une colonne utilisée dans la condition `ON` (ORA-38104).
+
+## INSERT ALL : plusieurs tables d'un coup
+```sql
+INSERT ALL
+  WHEN salaire >= 1000000 THEN INTO cadres_sup (id, nom) VALUES (id_employe, nom)
+  ELSE                         INTO autres    (id, nom) VALUES (id_employe, nom)
+SELECT id_employe, nom, salaire FROM employes;
+```
+Une seule lecture de la source alimente plusieurs tables, ce qui sert beaucoup dans les chargements de données.
+> Le bac à sable ne simule pas `MERGE` ni `INSERT ALL` : les exercices portent sur les UPDATE et DELETE avec sous-requête.
+
+=== EXERCICES
+?? Augmentez de 5 % le salaire de tous les employés qui travaillent à Douala, sans écrire les numéros de service.
+>> UPDATE employes SET salaire = salaire * 1.05 WHERE id_service IN (SELECT id_service FROM services WHERE ville = 'Douala')
+== SELECT id_employe, salaire FROM employes ORDER BY id_employe
+
+?? Supprimez les employés du service Commercial, sans écrire son numéro.
+>> DELETE FROM employes WHERE id_service = (SELECT id_service FROM services WHERE nom = 'Commercial')
+== SELECT id_employe FROM employes ORDER BY id_employe
+
+?? Donnez à chaque employé une prime égale à 5 % de la masse salariale de son service, arrondie à l'unité.
+>> UPDATE employes e SET prime = (SELECT ROUND(SUM(x.salaire) * 0.05) FROM employes x WHERE x.id_service = e.id_service)
+== SELECT id_employe, prime FROM employes ORDER BY id_employe
+~ Une sous-requête corrélée dans le SET : `WHERE x.id_service = e.id_service`.
+
+=== QUIZ
+? Que fait MERGE ?
+- Il fusionne deux tables en une seule table permanente
++ Il met à jour les lignes qui existent et insère celles qui manquent, en une instruction
+- Il supprime les doublons
+- Il joint deux tables comme JOIN
+= MERGE est l'outil du « upsert » : UPDATE si la ligne existe, INSERT sinon.
+
+? Comment s'écrit la condition de correspondance d'un MERGE ?
+- `WHERE e.id = i.id`
++ `ON (e.id = i.id)`, entre parenthèses
+- `USING e.id = i.id`
+- `MATCH e.id = i.id`
+= Les parenthèses autour de la condition ON sont obligatoires dans MERGE.
+
+? La source d'un MERGE contient deux lignes pour le même employé. Que se passe-t-il ?
+- La dernière ligne gagne
+- La première ligne gagne
++ ORA-30926 : Oracle ne peut pas choisir
+- Les deux salaires sont additionnés
+= La source doit être unique sur la clé de la condition ON.
+
+? Que fait cet UPDATE ?
+| UPDATE employes
+| SET    salaire = salaire * 1.05
+| WHERE  id_service IN (SELECT id_service FROM services
+|                       WHERE ville = 'Douala');
++ Il augmente de 5 % les employés des services situés à Douala
+- Il augmente de 5 % tous les employés
+- Il provoque ORA-01427
+- Il modifie la table SERVICES
+= `IN` accepte les deux services de Douala (20 et 30).
+
+? Quel est l'intérêt d'INSERT ALL ?
+- Insérer toutes les lignes d'une table sans WHERE
++ Alimenter plusieurs tables à partir d'une seule lecture de la source
+- Insérer sans vérifier les contraintes
+- Insérer plus vite en désactivant le redo
+= Chaque ligne de la source peut aller dans une ou plusieurs tables selon des conditions.

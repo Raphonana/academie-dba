@@ -1,0 +1,59 @@
+# Qu'est-ce qu'une base de données ?
+@duree 6
+@resume Les données, le SGBD, le modèle relationnel et la place d'Oracle.
+
+## Des données partout
+Une banque garde la liste de ses clients, de leurs comptes et de chaque opération. Un hôpital suit ses patients, ses médecins et ses rendez-vous. Toutes ces informations doivent être stockées longtemps, retrouvées en une fraction de seconde et protégées contre les pertes. C'est le rôle d'une **base de données**.
+
+## Le SGBD
+On ne lit pas une base de données comme un simple fichier. On passe par un logiciel spécialisé, le **SGBD** (Système de Gestion de Base de Données). Il s'occupe de :
+- stocker les données sur disque de façon organisée ;
+- répondre aux questions qu'on lui pose, très vite, même sur des millions de lignes ;
+- laisser des centaines d'utilisateurs travailler en même temps sans se marcher dessus ;
+- contrôler qui a le droit de voir ou de modifier quoi ;
+- remettre la base en état après une panne.
+
+## Le modèle relationnel
+Oracle est un SGBD **relationnel** : les données sont rangées dans des **tables**, un peu comme des feuilles de tableur très strictes. Chaque table décrit un seul sujet (les clients, les commandes…) et les tables sont reliées entre elles par des valeurs communes.
+
+## Le langage SQL
+Pour parler à la base, on utilise le **SQL** (Structured Query Language). C'est un langage déclaratif : on décrit **ce qu'on veut**, pas comment le trouver. C'est Oracle qui choisit la meilleure façon d'aller chercher les données.
+```sql
+SELECT nom, prenom
+FROM   employes
+WHERE  ville = 'Douala';
+```
+Cette requête se lit presque comme une phrase : « donne-moi le nom et le prénom des employés dont la ville est Douala ».
+
+## Oracle Database 19c
+Oracle Database est l'un des SGBD les plus utilisés au monde, notamment dans les banques, les télécoms, les administrations et les grandes entreprises. La version **19c** est la version « longue durée » la plus répandue en production : c'est elle que nous étudions dans ce cours.
+> Le métier de **DBA** (Database Administrator) consiste à installer, surveiller, sauvegarder, sécuriser et optimiser les bases de données. Ce cours vous y mène pas à pas, en commençant par le SQL, indispensable à tout DBA.
+
+=== QUIZ
+? Que signifie SGBD ?
+- Serveur Général de Bases de Données
++ Système de Gestion de Base de Données
+- Système Graphique de Bureau Distribué
+- Stockage Global de Bases Dynamiques
+= Le SGBD est le logiciel qui stocke, protège et sert les données. Oracle Database en est un.
+
+? Dans une base relationnelle, où sont rangées les données ?
+- Dans des fichiers texte libres
+- Dans des dossiers et sous-dossiers
++ Dans des tables faites de lignes et de colonnes
+- Dans des documents JSON uniquement
+= Le modèle relationnel organise les données en tables, reliées entre elles par des valeurs communes.
+
+? Pourquoi dit-on que SQL est un langage déclaratif ?
+- Parce qu'il faut déclarer chaque variable avant usage
++ Parce qu'on décrit le résultat voulu, et le SGBD choisit comment l'obtenir
+- Parce qu'il sert seulement à déclarer des tables
+- Parce qu'il ne fonctionne qu'avec Oracle
+= On dit « quoi », Oracle décide « comment ». C'est l'optimiseur d'Oracle qui choisit le chemin d'accès aux données.
+
+? Laquelle de ces tâches n'est PAS assurée par un SGBD ?
+- Gérer plusieurs utilisateurs en même temps
+- Contrôler les droits d'accès
+- Restaurer la base après une panne
++ Dessiner l'interface graphique de l'application
+= L'interface de l'application est le travail des développeurs. Le SGBD gère les données, les accès concurrents, la sécurité et la reprise après panne.

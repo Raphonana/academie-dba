@@ -1,0 +1,86 @@
+# Tables, lignes et colonnes
+@duree 7
+@resume Le vocabulaire de base et le schéma d'exemple utilisé dans tout le cours.
+
+## Une table
+Une **table** contient des données sur un seul sujet. Elle est faite de **colonnes** (les caractéristiques, toujours les mêmes) et de **lignes** (un enregistrement par élément).
+- Une colonne a un nom et un type : `nom` contient du texte, `salaire` contient un nombre.
+- Une ligne représente un élément précis : un employé, une commande, un compte.
+- À l'intersection d'une ligne et d'une colonne se trouve une **valeur**.
+
+## Notre schéma d'exemple
+Tout au long du cours, nous travaillerons avec une petite entreprise fictive qui a deux tables.
+```sql
+SERVICES
+id_service | nom            | ville
+-----------+----------------+---------
+10         | Direction      | Yaoundé
+20         | Informatique   | Douala
+30         | Comptabilité   | Douala
+40         | Commercial     | Garoua
+
+EMPLOYES
+id_employe | nom     | prenom   | salaire | id_service | id_manager
+-----------+---------+----------+---------+------------+-----------
+1          | MBARGA  | Paul     | 1500000 | 10         |
+2          | NGO     | Aïcha    |  900000 | 20         | 1
+3          | FOTSO   | Jean     |  650000 | 20         | 2
+4          | ATANGA  | Marie    |  720000 | 30         | 1
+5          | BELLO   | Ibrahim  |  480000 | 40         | 1
+```
+La table `EMPLOYES` a aussi les colonnes `email` et `date_embauche`, que nous verrons plus loin. Les salaires sont en francs CFA.
+
+## La clé primaire
+Chaque table a une colonne (ou un groupe de colonnes) qui identifie chaque ligne de façon unique : la **clé primaire**. Ici, `id_employe` pour les employés et `id_service` pour les services. Deux employés peuvent avoir le même nom, jamais le même `id_employe`.
+
+## La clé étrangère
+La colonne `id_service` de `EMPLOYES` pointe vers la table `SERVICES` : c'est une **clé étrangère**. Elle dit dans quel service travaille l'employé. Jean FOTSO a `id_service = 20`, il est donc à l'Informatique, à Douala.
+> `id_manager` est aussi une clé étrangère, mais elle pointe vers la table `EMPLOYES` elle-même : le manager de Jean est l'employé n° 2, Aïcha NGO.
+
+## Le schéma
+Dans Oracle, les tables appartiennent à un **schéma**, c'est-à-dire à un utilisateur de la base. Si l'utilisateur `RH` possède la table `EMPLOYES`, son nom complet est `RH.EMPLOYES`. Quand vous êtes connecté en tant que `RH`, écrire simplement `EMPLOYES` suffit.
+! Par défaut, Oracle range les noms de tables et de colonnes en MAJUSCULES. `employes`, `Employes` et `EMPLOYES` désignent donc la même table.
+
+=== QUIZ
+? Dans une table, que représente une ligne ?
+- Un type de donnée
++ Un enregistrement : par exemple un employé précis
+- Le nom d'une caractéristique
+- Une table liée
+= Chaque ligne décrit un élément. Les colonnes, elles, décrivent les caractéristiques communes à tous les éléments.
+
+? À quoi sert une clé primaire ?
+- À trier la table par ordre alphabétique
+- À protéger la table par un mot de passe
++ À identifier chaque ligne de façon unique
+- À relier la table à un autre schéma
+= Deux lignes ne peuvent jamais avoir la même valeur de clé primaire. C'est ce qui permet de désigner une ligne sans ambiguïté.
+
+? Dans notre schéma, quelle colonne de EMPLOYES est une clé étrangère vers SERVICES ?
+- `id_employe`
+- `salaire`
++ `id_service`
+- `nom`
+= `id_service` contient le numéro d'un service qui existe dans la table `SERVICES`.
+
+? Dans quelle ville travaille Ibrahim BELLO ?
+- Douala
+- Yaoundé
++ Garoua
+- On ne peut pas le savoir
+= Ibrahim a `id_service = 40`. Dans `SERVICES`, le service 40 est le Commercial, situé à Garoua.
+
+? Connecté en tant que RH, comment Oracle comprend-il `select * from employes` ?
+- Comme une erreur, car il faut écrire EMPLOYES en majuscules
++ Comme une requête sur la table RH.EMPLOYES
+- Comme une requête sur toutes les tables EMPLOYES de la base
+- Comme une requête sur la table SYS.EMPLOYES
+= Les noms sont convertis en majuscules et la table est cherchée d'abord dans votre propre schéma.
+
+=== EXERCICES
+?? Affichez tout le contenu de la table `SERVICES`.
+>> SELECT * FROM services
+~ L'étoile `*` désigne toutes les colonnes : `SELECT * FROM …`
+
+?? Affichez tout le contenu de la table `EMPLOYES`.
+>> SELECT * FROM employes

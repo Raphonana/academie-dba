@@ -1,0 +1,102 @@
+# Sessions bloquées et verrous
+@duree 9
+@resume Trouver qui bloque qui, tuer une session proprement, et les deadlocks.
+
+## Pourquoi des sessions se bloquent
+Quand une session modifie une ligne, elle la verrouille jusqu'à son COMMIT ou son ROLLBACK (verrou **TX**). Toute autre session qui veut modifier **la même ligne** attend, sur l'événement `enq: TX - row lock contention`. Les lectures, elles, ne sont jamais bloquées.
+Le cas typique : quelqu'un fait un UPDATE dans SQL Developer, oublie de valider, et part déjeuner. L'application, qui veut modifier les mêmes lignes, se fige.
+
+## Trouver le bloqueur
+Depuis la 10g, `V$SESSION` indique directement qui bloque qui :
+```sql
+SELECT sid, username, event, seconds_in_wait, blocking_session
+FROM   v$session
+WHERE  blocking_session IS NOT NULL;
+```
+Puis on regarde le bloqueur : qui est-ce, depuis quelle machine, avec quel programme, et depuis quand ne fait-il plus rien ?
+```sql
+SELECT sid, serial#, username, osuser, machine, program, status, seconds_in_wait
+FROM   v$session
+WHERE  sid = 212;
+```
+> Un bloqueur `INACTIVE` depuis longtemps, avec un programme comme SQL Developer ou Toad, c'est presque toujours une transaction oubliée.
+
+## Tuer une session
+```sql
+ALTER SYSTEM KILL SESSION '212,3301' IMMEDIATE;
+```
+Il faut le **SID** et le **SERIAL#** : le numéro de série évite de tuer par erreur une autre session qui aurait repris le même SID. Avec RAC, on ajoute le numéro d'instance : `'212,3301,@1'`.
+! Tuer une session annule sa transaction en cours : tout son travail non validé est perdu, et l'annulation d'une grosse transaction peut prendre autant de temps que la transaction elle-même. Quand c'est possible, **appelez d'abord la personne** : un simple COMMIT ou ROLLBACK de sa part règle le problème sans rien perdre.
+
+## Les deadlocks
+Si A attend B et que B attend A, aucune des deux ne peut avancer : c'est un **interblocage** (deadlock). Oracle le détecte en quelques secondes, annule l'instruction de l'une des deux sessions, et lui renvoie **ORA-00060: deadlock detected while waiting for resource**. Un fichier de trace détaillé est écrit et signalé dans l'alert log.
+Un deadlock est presque toujours un problème de **conception de l'application** (deux traitements qui modifient les mêmes lignes dans un ordre différent), pas de la base.
+
+=== EXERCICES
+?? Affichez le numéro, l'utilisateur, l'événement attendu et le numéro de la session bloquante, pour toutes les sessions bloquées.
+>> SELECT sid, username, event, blocking_session FROM v$session WHERE blocking_session IS NOT NULL
+
+?? Affichez le SID, le SERIAL#, l'utilisateur système, la machine, le programme et l'état de la session qui bloque les autres.
+>> SELECT sid, serial#, osuser, machine, program, status FROM v$session WHERE sid IN (SELECT blocking_session FROM v$session)
+~ Une sous-requête : `WHERE sid IN (SELECT blocking_session FROM v$session)`.
+
+?? Générez la commande qui tue la session bloquante, sous la forme `ALTER SYSTEM KILL SESSION '212,3301' IMMEDIATE;`.
+>> SELECT 'ALTER SYSTEM KILL SESSION ''' || sid || ',' || serial# || ''' IMMEDIATE;' AS commande FROM v$session WHERE sid IN (SELECT blocking_session FROM v$session)
+~ Collez les morceaux avec `||`. Pour écrire une apostrophe dans une chaîne, doublez-la : `''`.
+
+=== INCIDENT
+# L'application RH est figée
+@contexte 7 h 30. La DRH appelle : impossible d'enregistrer la moindre fiche dans l'application RH, l'écran tourne sans fin. Les autres applications fonctionnent.
+?! Que vérifiez-vous en premier ?
++ Les sessions qui attendent et ce qu'elles attendent => Deux sessions APP_RH attendent sur « enq: TX - row lock contention » depuis plus de 10 et 30 minutes, bloquées par la session 212.
+- L'espace des tablespaces => Un tablespace plein donnerait une erreur ORA-01653, pas un écran qui tourne.
+- L'état de la sauvegarde => Sans rapport avec ce symptôme.
+?! Vous regardez la session 212 :
+| SID  SERIAL#  OSUSER  MACHINE       PROGRAM        STATUS    SECONDS_IN_WAIT
+| 212  3301     jfotso  PC-COMPTA-07  SQL Developer  INACTIVE  2400
+- C'est un traitement de nuit encore en cours => Un traitement en cours serait ACTIVE. Celle-ci ne fait rien depuis 40 minutes.
++ Jean FOTSO a modifié des lignes dans SQL Developer sans valider, et ne fait plus rien depuis 40 minutes => C'est le scénario classique de la transaction oubliée.
+- Une attaque informatique => Rien ne l'indique : c'est le poste habituel d'un collègue, avec un outil habituel.
+?! Que faites-vous ?
++ Vous appelez Jean FOTSO pour qu'il valide ou annule sa transaction => Il était en train de corriger des données hier soir et a oublié le COMMIT. Il valide, ses corrections sont gardées, et l'application repart aussitôt.
+- Vous tuez immédiatement toutes les sessions APP_RH => Vous coupez l'application pour tout le monde, et le bloqueur, lui, est toujours là.
+- Vous redémarrez la base => Tout le monde est coupé, et le travail de Jean est perdu. C'est un marteau pour écraser une mouche.
+?! Jean ne répond pas, et la DRH a une paie à lancer. Que faites-vous ?
++ Vous tuez la session 212, après avoir prévenu sa hiérarchie => `ALTER SYSTEM KILL SESSION '212,3301' IMMEDIATE;`. Sa transaction est annulée (il devra refaire ses corrections), mais l'application repart. Vous notez l'incident.
+- Vous attendez qu'il revienne => La paie de toute l'entreprise est bloquée : le coût est trop élevé.
+
+=== QUIZ
+? Quel événement d'attente signale une ligne verrouillée par une autre session ?
++ enq: TX - row lock contention
+- db file sequential read
+- log file sync
+- SQL*Net message from client
+= La session attend que le verrou TX soit libéré par un COMMIT ou un ROLLBACK.
+
+? Pourquoi faut-il le SERIAL# pour tuer une session ?
+- Par sécurité, comme un mot de passe
++ Pour ne pas tuer une autre session qui aurait réutilisé le même SID
+- Parce que le SID ne suffit pas sous Windows
+- Ce n'est pas nécessaire
+= Le couple SID et SERIAL# identifie une session de façon unique.
+
+? Que devient la transaction d'une session tuée ?
+- Elle est validée
++ Elle est annulée : le travail non validé est perdu
+- Elle est mise en pause
+- Elle est transférée à une autre session
+= Et l'annulation peut prendre longtemps si la transaction était grosse.
+
+? Oracle détecte un deadlock. Que fait-il ?
+- Il arrête l'instance
+- Il attend indéfiniment
++ Il annule l'instruction d'une des deux sessions et lui renvoie ORA-00060
+- Il tue les deux sessions
+= Un fichier de trace détaille les sessions et les lignes en cause.
+
+? Une session INACTIVE depuis 40 minutes bloque l'application. Quelle est la première action ?
++ Contacter la personne pour qu'elle valide ou annule
+- La tuer sans prévenir
+- Redémarrer la base
+- Augmenter la SGA
+= On ne perd rien si elle valide elle-même. On tue seulement si on ne peut pas la joindre.

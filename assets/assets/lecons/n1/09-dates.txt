@@ -1,0 +1,107 @@
+# Travailler avec les dates
+@duree 9
+@resume SYSDATE, TO_DATE, TO_CHAR, calculs sur les dates et le piège de l'heure.
+
+## Les dates d'embauche
+La colonne `date_embauche` de `EMPLOYES` contient : MBARGA le 01/02/2010, NGO le 14/09/2015, ATANGA le 04/06/2018, FOTSO le 01/03/2021 et BELLO le 20/11/2023.
+
+## La date du jour
+`SYSDATE` renvoie la date et l'heure actuelles du serveur de base de données.
+```sql
+SELECT SYSDATE FROM dual;
+```
+
+## Écrire une date
+La façon la plus sûre est le **littéral DATE**, toujours au format année-mois-jour :
+```sql
+WHERE date_embauche >= DATE '2018-01-01'
+```
+Pour lire une date écrite dans un autre format, on utilise `TO_DATE` avec un **masque** :
+```sql
+TO_DATE('15/03/2024', 'DD/MM/YYYY')
+TO_DATE('15/03/2024 08:30', 'DD/MM/YYYY HH24:MI')
+```
+! N'écrivez jamais `WHERE date_embauche = '15/03/2024'` : Oracle convertit alors le texte selon le paramètre `NLS_DATE_FORMAT` de la session, qui change d'un poste à l'autre. La requête peut marcher chez vous et échouer chez un collègue.
+
+## Afficher une date : TO_CHAR
+`TO_CHAR(date, masque)` transforme une date en texte :
+```sql
+SELECT nom, TO_CHAR(date_embauche, 'DD/MM/YYYY') AS embauche
+FROM   employes;
+```
+Les masques utiles : `DD` jour, `MM` mois, `YYYY` année, `HH24` heure, `MI` minutes, `SS` secondes, `DAY` nom du jour, `MONTH` nom du mois.
+> Attention : `MI` = minutes et `MM` = mois. Confondre les deux est une erreur très fréquente.
+
+## Calculer avec les dates
+- `date + 1` donne le lendemain, `date + 1/24` ajoute une heure ;
+- `date2 - date1` donne un nombre de **jours** (avec décimales) ;
+- `ADD_MONTHS(date, 3)` ajoute 3 mois, `MONTHS_BETWEEN(d2, d1)` compte les mois ;
+- `LAST_DAY(date)` donne le dernier jour du mois ;
+- `EXTRACT(YEAR FROM date)` donne l'année.
+```sql
+SELECT nom,
+       TRUNC(MONTHS_BETWEEN(SYSDATE, date_embauche) / 12) AS anciennete
+FROM   employes;
+```
+
+## Le piège de l'heure
+Une `DATE` contient toujours une heure. Si une commande a été passée le 15/03/2024 à 14 h 20, `WHERE date_cmd = DATE '2024-03-15'` ne la trouve pas (il cherche minuit pile). Deux solutions :
+```sql
+WHERE TRUNC(date_cmd) = DATE '2024-03-15'
+WHERE date_cmd >= DATE '2024-03-15'
+AND   date_cmd <  DATE '2024-03-16'   -- préférable : peut utiliser un index
+```
+`TRUNC(date)` ramène l'heure à 00:00:00.
+
+=== QUIZ
+? Quelle est la façon la plus sûre d'écrire le 1er juillet 2024 dans une requête ?
+- `'01/07/2024'`
++ `DATE '2024-07-01'`
+- `'2024-07-01'`
+- `01-07-2024`
+= Le littéral `DATE 'AAAA-MM-JJ'` ne dépend d'aucun paramètre de session.
+
+? Que donne `TO_CHAR(SYSDATE, 'HH24:MM')` à 14 h 35 en octobre ?
+- 14:35
++ 14:10
+- 02:35
+- Une erreur
+= `MM` est le mois (octobre = 10), pas les minutes. Il fallait écrire `HH24:MI`.
+
+? Que renvoie `DATE '2024-03-10' - DATE '2024-03-01'` ?
+- 9 heures
++ 9 (jours)
+- 1 semaine
+- Une erreur : on ne peut pas soustraire des dates
+= La différence entre deux dates est un nombre de jours.
+
+? Une commande passée le 15/03/2024 à 14 h 20 est-elle trouvée par `WHERE date_cmd = DATE '2024-03-15'` ?
+- Oui
++ Non, car le littéral vaut le 15/03/2024 à 00:00:00
+- Oui, si on est dans le même fuseau horaire
+- Non, car il faut écrire TO_DATE
+= Une DATE contient l'heure. Utilisez `TRUNC(date_cmd)` ou un intervalle `>=` / `<`.
+
+? Comment obtenir la date dans 6 mois ?
+- `SYSDATE + 6`
+- `SYSDATE + 180`
++ `ADD_MONTHS(SYSDATE, 6)`
+- `MONTHS(SYSDATE, 6)`
+= `SYSDATE + 6` ajoute 6 jours. `ADD_MONTHS` tient compte de la longueur réelle des mois.
+
+=== EXERCICES
+?? Affichez le nom et la date d'embauche de chaque employé sous forme de texte au format `JJ/MM/AAAA` (par exemple 01/02/2010).
+>> SELECT nom, TO_CHAR(date_embauche, 'DD/MM/YYYY') FROM employes
+~ `TO_CHAR(date, 'DD/MM/YYYY')`.
+
+?? Affichez le nom des employés embauchés à partir du 1er janvier 2018.
+>> SELECT nom FROM employes WHERE date_embauche >= DATE '2018-01-01'
+~ Utilisez un littéral `DATE 'AAAA-MM-JJ'`.
+
+?? Affichez le nom et l'année d'embauche (un nombre) de chaque employé.
+>> SELECT nom, EXTRACT(YEAR FROM date_embauche) AS annee FROM employes
+~ `EXTRACT(YEAR FROM …)` donne un nombre ; `TO_CHAR(…, 'YYYY')` donnerait du texte.
+
+?? La période d'essai dure 3 mois. Affichez le nom et la date de fin d'essai de chaque employé, au format `JJ/MM/AAAA`.
+>> SELECT nom, TO_CHAR(ADD_MONTHS(date_embauche, 3), 'DD/MM/YYYY') AS fin_essai FROM employes
+~ `ADD_MONTHS(date, 3)`, puis `TO_CHAR`.

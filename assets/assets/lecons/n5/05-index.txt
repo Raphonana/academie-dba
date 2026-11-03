@@ -1,0 +1,88 @@
+# Les index et leurs pièges
+@duree 10
+@resume B-tree, index composés, bitmap, index sur fonction, index invisibles et inutilisables.
+
+## L'index B-tree
+L'index classique est un **arbre équilibré** (B-tree) : quelques niveaux de blocs de branche, puis des blocs feuilles qui contiennent les valeurs triées et leurs ROWID. Trouver une valeur parmi des centaines de millions demande seulement 3 ou 4 lectures de blocs.
+Un index n'est pas gratuit : chaque INSERT, UPDATE de la colonne ou DELETE doit aussi mettre l'index à jour. Dix index sur une table, c'est des insertions nettement plus lentes.
+
+## L'index composé
+Un index sur plusieurs colonnes, par exemple `(id_client, date_vente)`, sert aux requêtes qui filtrent sur `id_client`, ou sur `id_client` **et** `date_vente`. En général, il ne sert pas pour filtrer sur `date_vente` seule. Placez en premier la colonne la plus souvent utilisée dans les filtres.
+
+## Pourquoi mon index n'est pas utilisé ?
+Les causes les plus fréquentes, à vérifier dans cet ordre :
+- **une fonction sur la colonne** : `WHERE TRUNC(date_vente) = :d` ou `WHERE UPPER(nom) = 'BELLO'` ne peuvent pas utiliser un index sur `date_vente` ou sur `nom` ;
+- **une conversion implicite** : une colonne VARCHAR2 comparée à un nombre (`WHERE code = 123`) est convertie avec TO_NUMBER, ligne par ligne, et l'index est ignoré ;
+- `LIKE '%texte'` : un joker au début empêche la recherche dans l'arbre ;
+- `IS NULL` : un index B-tree sur une seule colonne ne contient pas les NULL ;
+- **l'optimiseur pense, à raison ou à tort, qu'un parcours complet est moins cher** : statistiques, proportion de lignes ;
+- **l'index est invisible ou inutilisable**.
+```sql
+-- Au lieu de WHERE TRUNC(date_vente) = :d
+WHERE date_vente >= :d AND date_vente < :d + 1
+
+-- Ou un index sur la fonction
+CREATE INDEX idx_lignes_jour ON lignes_ventes (TRUNC(date_vente));
+```
+
+## Les autres sortes d'index
+- **index bitmap** : très compact pour les colonnes à peu de valeurs (sexe, statut), excellent dans un entrepôt de données. À **proscrire** sur une table modifiée en continu : une mise à jour verrouille des milliers de lignes d'un coup ;
+- **index sur fonction** (function-based) : indexe le résultat d'une expression, comme `UPPER(nom)` ;
+- **index invisible** : maintenu à jour mais ignoré par l'optimiseur. Idéal pour tester l'effet d'un index, ou de sa suppression, sans risque : `ALTER INDEX … INVISIBLE / VISIBLE` ;
+- **index inutilisable** (`UNUSABLE`) : après un `ALTER TABLE … MOVE` ou certaines opérations sur partitions, l'index n'est plus à jour. L'optimiseur l'ignore. Il faut le reconstruire : `ALTER INDEX … REBUILD ONLINE`.
+
+=== EXERCICES
+?? Affichez le nom, la table et le statut des index qui ne sont pas VALID.
+>> SELECT index_name, table_name, status FROM dba_indexes WHERE status <> 'VALID'
+
+?? Affichez le nom et la table des index invisibles.
+>> SELECT index_name, table_name FROM dba_indexes WHERE visibility = 'INVISIBLE'
+
+?? Affichez les colonnes, dans l'ordre, de chaque index de la table LIGNES_VENTES.
+>> SELECT index_name, column_name, column_position FROM dba_ind_columns WHERE table_name = 'LIGNES_VENTES' ORDER BY index_name, column_position
+
+?? Générez la commande de reconstruction de chaque index inutilisable, sous la forme `ALTER INDEX APP_VENTES.IDX_LIGNES_PRODUIT REBUILD ONLINE;`.
+>> SELECT 'ALTER INDEX ' || owner || '.' || index_name || ' REBUILD ONLINE;' AS commande FROM dba_indexes WHERE status = 'UNUSABLE'
+
+=== QUIZ
+? Pourquoi `WHERE TRUNC(date_vente) = :d` n'utilise-t-il pas l'index sur date_vente ?
+- Parce que TRUNC est interdit dans un WHERE
++ Parce que l'index contient les valeurs de date_vente, pas celles de TRUNC(date_vente)
+- Parce que :d est une variable de liaison
+- Parce que l'index est trop vieux
+= Réécrivez avec un intervalle, ou créez un index sur TRUNC(date_vente).
+
+? La colonne code est un VARCHAR2 indexé. Pourquoi `WHERE code = 123` est-il lent ?
++ Oracle convertit la colonne en nombre pour chaque ligne, ce qui empêche d'utiliser l'index
+- Parce que 123 est trop petit
+- Parce qu'il faut des guillemets doubles
+- Ce n'est pas lent
+= Écrivez `WHERE code = '123'` : la comparaison se fait alors sur le texte, avec l'index.
+
+? Un index composé est créé sur (id_client, date_vente). Quelle requête en profite le mieux ?
++ `WHERE id_client = :c AND date_vente > :d`
+- `WHERE date_vente > :d`
+- `WHERE montant > 1000`
+- `WHERE UPPER(id_client) = :c`
+= La première colonne de l'index doit en général figurer dans le filtre.
+
+? Pourquoi éviter un index bitmap sur une table de caisse très active ?
+- Il est trop gros
++ Une mise à jour verrouille des quantités de lignes, ce qui bloque les autres sessions
+- Il ne supporte pas les NULL
+- Il est payant
+= Les index bitmap sont faits pour les entrepôts de données, chargés par lots.
+
+? À quoi sert un index invisible ?
+- À cacher des données sensibles
++ À tester l'effet d'un index, ou de sa suppression, sans changer les plans de toute l'application
+- À accélérer les insertions
+- À remplacer une clé primaire
+= Il est maintenu à jour, mais l'optimiseur l'ignore tant qu'il est invisible.
+
+? Que faut-il faire d'un index UNUSABLE ?
+- Rien, Oracle le répare seul
++ Le reconstruire avec ALTER INDEX … REBUILD (ONLINE si possible)
+- Le rendre invisible
+- Redémarrer la base
+= Tant qu'il est inutilisable, les requêtes qui en dépendaient font des parcours complets.

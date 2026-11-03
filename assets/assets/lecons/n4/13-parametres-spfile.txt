@@ -1,0 +1,96 @@
+# Paramètres et spfile
+@duree 9
+@resume ALTER SYSTEM, SCOPE, paramètres statiques et dynamiques, et la base qui ne démarre plus.
+
+## Lire les paramètres
+```sql
+SHOW PARAMETER sga
+SELECT name, value, isdefault, ismodified FROM v$parameter WHERE name LIKE 'undo%';
+```
+`V$PARAMETER` montre les valeurs **en cours** dans l'instance, `V$SPPARAMETER` celles écrites dans le spfile.
+
+## Modifier un paramètre
+```sql
+ALTER SYSTEM SET undo_retention = 10800 SCOPE = BOTH;
+ALTER SYSTEM SET processes = 800 SCOPE = SPFILE;
+ALTER SESSION SET nls_date_format = 'DD/MM/YYYY HH24:MI';
+```
+- `SCOPE = MEMORY` : tout de suite, jusqu'au prochain redémarrage ;
+- `SCOPE = SPFILE` : au prochain démarrage seulement. Obligatoire pour les paramètres **statiques** comme `PROCESSES` ou `SGA_MAX_SIZE` ;
+- `SCOPE = BOTH` (par défaut avec un spfile) : tout de suite et de façon durable ;
+- `ALTER SESSION` ne change que votre session.
+> Ajoutez un commentaire : `ALTER SYSTEM SET processes = 800 COMMENT = 'Ticket 4521, nouveaux postes' SCOPE = SPFILE;`. Il est visible dans le spfile et aide énormément les collègues.
+
+## Le spfile et le pfile
+Au démarrage, Oracle cherche dans `$ORACLE_HOME/dbs` : d'abord `spfilePRODCM.ora`, puis `spfile.ora`, puis `initPRODCM.ora`. On passe de l'un à l'autre :
+```sql
+CREATE PFILE = '/tmp/initPRODCM.ora' FROM SPFILE;
+CREATE SPFILE FROM PFILE = '/tmp/initPRODCM.ora';
+CREATE PFILE = '/tmp/init_memoire.ora' FROM MEMORY;
+STARTUP PFILE = '/tmp/initPRODCM.ora'
+```
+! Ces commandes fonctionnent même instance arrêtée (connecté en SYSDBA à une « idle instance ») : c'est ce qui permet de réparer un spfile qui empêche le démarrage.
+
+## Les paramètres cachés
+Les paramètres qui commencent par un tiret bas (`_optimizer_…`, `_allow_resetlogs_corruption`…) ne sont pas documentés. On ne les touche **que** sur demande écrite d'Oracle Support : ils peuvent corrompre une base ou la rendre non supportée.
+
+=== EXERCICES
+?? Affichez le nom et la valeur des paramètres dont la valeur n'est pas celle par défaut.
+>> SELECT name, value FROM v$parameter WHERE isdefault = 'FALSE'
+
+?? Affichez la valeur des paramètres `processes`, `sessions` et `open_cursors`.
+>> SELECT name, value FROM v$parameter WHERE name IN ('processes', 'sessions', 'open_cursors')
+
+=== INCIDENT
+# La base refuse de démarrer après une modification
+@contexte Samedi, 10 h, maintenance prévue. Hier, un collègue a lancé ALTER SYSTEM SET sga_target = 64G SCOPE = SPFILE « pour améliorer les performances ». Ce matin, après le redémarrage du serveur, STARTUP échoue : ORA-27102: out of memory. Le serveur n'a que 32 Go de mémoire.
+?! Que comprenez-vous ?
++ Le spfile demande une SGA plus grande que la mémoire du serveur, et l'instance ne peut pas la réserver => La modification d'hier n'a pris effet qu'au redémarrage, avec SCOPE = SPFILE. Personne n'a rien vu avant.
+- Le fichier de contrôle est corrompu => L'erreur arrive avant même l'étape MOUNT : c'est la réservation de mémoire qui échoue.
+- Une barrette mémoire est en panne => Le serveur a ses 32 Go, c'est la demande d'Oracle qui est excessive.
+?! L'instance ne démarre pas, vous ne pouvez donc pas faire ALTER SYSTEM. Comment corrigez-vous ?
++ CREATE PFILE FROM SPFILE, corriger sga_target dans le pfile, puis STARTUP PFILE => Ces commandes fonctionnent instance arrêtée. Vous remettez sga_target (et sga_max_size) à 8G dans le fichier texte, et la base démarre.
+- Éditer le spfile avec vi => Le spfile est un fichier binaire : l'éditer à la main le rend illisible.
+- Réinstaller Oracle => Des heures de travail pour un paramètre.
+?! La base est ouverte avec le pfile. Que reste-t-il à faire ?
++ CREATE SPFILE FROM PFILE, puis redémarrer pour vérifier que la base démarre seule => Sans cela, le prochain démarrage utiliserait de nouveau l'ancien spfile, toujours faux. Vous remettez aussi un commentaire sur le paramètre.
+- Rien, le pfile suffit => Au prochain redémarrage, Oracle trouverait d'abord le spfile défectueux : même panne.
+?! Comment éviter que cela se reproduise ?
++ Garder une copie du spfile sous forme de pfile après chaque modification, et faire valider les changements de mémoire => Une copie texte récente (et l'autobackup RMAN du spfile) permet de revenir en arrière en une minute. Et un changement de SGA se prépare : mémoire du serveur, HugePages, test.
+- Interdire tout changement de paramètre => Il faut pouvoir régler la base ; il faut surtout que ce soit maîtrisé.
+
+=== QUIZ
+? Que fait SCOPE = SPFILE ?
+- Le changement est immédiat et temporaire
++ Le changement est écrit dans le spfile et prendra effet au prochain démarrage
+- Le changement ne concerne que la session
+- Le changement est annulé au redémarrage
+= C'est obligatoire pour les paramètres statiques.
+
+? PROCESSES est un paramètre statique. Que se passe-t-il avec `ALTER SYSTEM SET processes = 800 SCOPE = BOTH;` ?
+- Il est appliqué immédiatement
++ Oracle refuse : ORA-02095, ce paramètre ne peut pas être modifié en mémoire
+- Il est ignoré
+- La base redémarre seule
+= Pour un paramètre statique, seul SCOPE = SPFILE est accepté.
+
+? Dans quel ordre Oracle cherche-t-il son fichier de paramètres au démarrage ?
++ spfilePRODCM.ora, puis spfile.ora, puis initPRODCM.ora
+- initPRODCM.ora, puis spfilePRODCM.ora
+- Uniquement initPRODCM.ora
+- Celui qui a été modifié le plus récemment
+= Le spfile propre à l'instance est prioritaire.
+
+? Peut-on créer un pfile à partir du spfile quand l'instance est arrêtée ?
++ Oui, connecté en SYSDBA à l'instance non démarrée
+- Non, il faut que la base soit ouverte
+- Seulement en MOUNT
+- Seulement avec RMAN
+= C'est la clé pour réparer un spfile qui empêche le démarrage.
+
+? Quand peut-on modifier un paramètre caché comme `_optimizer_xxx` ?
+- Quand on veut améliorer les performances
++ Seulement sur demande d'Oracle Support
+- Jamais en production, toujours en test
+- Après un redémarrage
+= Ils ne sont pas documentés et peuvent avoir des effets graves.

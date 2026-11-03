@@ -1,0 +1,105 @@
+# BULK COLLECT, FORALL et SQL dynamique
+@duree 10
+@resume Traiter des volumes en lots, construire du SQL à l'exécution sans ouvrir la porte à l'injection.
+
+## Le coût des allers-retours
+PL/SQL et SQL sont deux moteurs différents dans le serveur. Chaque instruction SQL lancée depuis une boucle provoque un **changement de contexte** entre les deux. Sur un million de lignes, ces passages coûtent plus cher que le travail lui-même.
+
+## BULK COLLECT : lire en lots
+```sql
+DECLARE
+  TYPE t_ids IS TABLE OF employes.id_employe%TYPE;
+  v_ids t_ids;
+BEGIN
+  SELECT id_employe BULK COLLECT INTO v_ids
+  FROM   employes WHERE id_service = 20;
+  DBMS_OUTPUT.PUT_LINE(v_ids.COUNT || ' employés chargés');
+END;
+```
+Toutes les lignes arrivent d'un coup dans une **collection** (un tableau PL/SQL). Sur de grosses tables, on lit par paquets pour ne pas saturer la mémoire de la session (PGA) :
+```sql
+OPEN c;
+LOOP
+  FETCH c BULK COLLECT INTO v_ids LIMIT 1000;
+  EXIT WHEN v_ids.COUNT = 0;
+  -- traiter les 1000 lignes
+END LOOP;
+CLOSE c;
+```
+> Avec LIMIT, testez `v_ids.COUNT = 0` et non `c%NOTFOUND` : le dernier paquet, incomplet, met déjà NOTFOUND à vrai, et serait perdu.
+
+## FORALL : écrire en lots
+```sql
+FORALL i IN 1 .. v_ids.COUNT
+  UPDATE employes SET salaire = salaire * 1.05
+  WHERE  id_employe = v_ids(i);
+```
+`FORALL` n'est pas une boucle : il envoie **une seule fois** l'instruction au moteur SQL avec toutes les valeurs. Le gain est souvent de 10 à 100 fois. `SAVE EXCEPTIONS` permet de continuer malgré les lignes en erreur, puis de les examiner dans `SQL%BULK_EXCEPTIONS`.
+
+## Le SQL dynamique : EXECUTE IMMEDIATE
+Parfois, le texte de l'instruction n'est connu qu'à l'exécution : nom de table variable, ordre DDL… On l'exécute avec `EXECUTE IMMEDIATE` :
+```sql
+EXECUTE IMMEDIATE 'TRUNCATE TABLE ' || p_table;
+
+EXECUTE IMMEDIATE
+  'SELECT COUNT(*) FROM employes WHERE id_service = :s'
+  INTO v_nb
+  USING p_service;
+```
+`:s` est une **variable de liaison** (bind variable), dont la valeur est passée par `USING`.
+
+## L'injection SQL
+! Ne collez jamais une valeur saisie par un utilisateur dans le texte d'une requête :
+```sql
+-- DANGEREUX
+EXECUTE IMMEDIATE 'SELECT COUNT(*) FROM employes WHERE nom = ''' || p_nom || ''''
+  INTO v_nb;
+```
+Si l'utilisateur saisit `x' OR '1'='1`, la condition devient toujours vraie. Avec des saisies plus malveillantes, on peut lire des données interdites. Les variables de liaison règlent le problème : la valeur n'est jamais interprétée comme du SQL.
+Quand un **nom d'objet** doit être variable (une variable de liaison ne peut pas remplacer un nom de table), validez-le avec `DBMS_ASSERT.SQL_OBJECT_NAME` ou `DBMS_ASSERT.SIMPLE_SQL_NAME`.
+> Bonus pour le DBA : les variables de liaison permettent aussi à Oracle de réutiliser le plan d'exécution au lieu de réanalyser chaque requête (le *hard parse*), ce qui soulage la shared pool. Nous y reviendrons au niveau Performance.
+
+=== QUIZ
+? Pourquoi une boucle qui fait un INSERT par ligne est-elle lente ?
+- Parce que INSERT est lent par nature
++ Parce que chaque instruction provoque un changement de contexte entre PL/SQL et SQL
+- Parce qu'Oracle fait un COMMIT à chaque ligne
+- Parce que la boucle verrouille la table
+= FORALL envoie toutes les lignes en un seul passage.
+
+? Que fait BULK COLLECT ?
++ Il charge plusieurs lignes d'un coup dans une collection
+- Il supprime les doublons
+- Il compresse la table
+- Il lit une seule ligne
+= Avec LIMIT, il lit par paquets pour maîtriser la mémoire.
+
+? FORALL est-il une boucle ?
+- Oui, comme FOR
++ Non : il envoie l'instruction une seule fois avec toutes les valeurs de la collection
+- Oui, mais en parallèle
+- Non, c'est un curseur
+= Sa syntaxe ressemble à FOR, mais il n'y a qu'un seul passage vers le moteur SQL.
+
+? Avec `FETCH … BULK COLLECT … LIMIT 1000`, quelle condition de sortie est correcte ?
+- `EXIT WHEN c%NOTFOUND;` juste après le FETCH
++ `EXIT WHEN v_ids.COUNT = 0;` juste après le FETCH
+- `EXIT WHEN v_ids IS NULL;`
+- Aucune, la boucle s'arrête seule
+= Le dernier paquet incomplet met NOTFOUND à vrai alors qu'il contient encore des lignes à traiter.
+
+? Quel est le problème de ce code ?
+| EXECUTE IMMEDIATE
+|   'DELETE FROM employes WHERE nom = ''' || p_nom || ''''
+- Il manque INTO
++ Il est vulnérable à l'injection SQL : il faut une variable de liaison
+- EXECUTE IMMEDIATE n'accepte pas DELETE
+- Il manque un COMMIT
+= Avec `WHERE nom = :n … USING p_nom`, la saisie n'est jamais interprétée comme du SQL.
+
+? Peut-on passer un nom de table par une variable de liaison ?
+- Oui, avec USING
++ Non : il faut concaténer le nom, après l'avoir validé avec DBMS_ASSERT
+- Oui, avec INTO
+- Non, le SQL dynamique ne permet pas de changer de table
+= Les variables de liaison ne remplacent que des valeurs, jamais des noms d'objets ou des mots clés.

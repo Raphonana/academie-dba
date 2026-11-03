@@ -1,0 +1,74 @@
+# Les fichiers d'une base Oracle
+@duree 9
+@resume Fichiers de contrôle, de données, redo, archives, spfile, fichier de mots de passe et alert log.
+
+## Les trois familles indispensables
+- **Fichiers de données** (datafiles, `.dbf`) : les tables, les index, le dictionnaire, l'undo. C'est là que sont vos données ;
+- **Fichiers de contrôle** (control files, `.ctl`) : le « registre » de la base. Ils contiennent le nom de la base, la liste et l'emplacement de tous les fichiers, le numéro SCN courant, l'historique des sauvegardes RMAN. Sans eux, Oracle ne sait pas quels fichiers ouvrir ;
+- **Fichiers redo** (online redo logs, `.log`) : le journal de toutes les modifications. Ils permettent de rejouer le travail après une panne.
+! Les fichiers de contrôle et les fichiers redo doivent être **multiplexés** : au moins deux copies, sur des disques différents. Perdre la seule copie d'un fichier de contrôle oblige à une restauration.
+
+## Les autres fichiers
+- **Fichiers d'archives** (archived redo logs) : les copies des fichiers redo une fois remplis, en mode ARCHIVELOG. Indispensables pour restaurer jusqu'à un instant précis ;
+- **spfile** (`$ORACLE_HOME/dbs/spfilePRODCM.ora`) : les paramètres de l'instance, en binaire. Son ancêtre, le **pfile** (`initPRODCM.ora`), est un simple fichier texte ;
+- **fichier de mots de passe** (`orapwPRODCM`) : les mots de passe des comptes SYSDBA, pour les connexions à distance ;
+- **alert log** (`alert_PRODCM.log`) : le journal de bord de l'instance. Démarrages, arrêts, erreurs ORA-, changements de paramètres, bascules de redo… Le premier fichier que lit un DBA ;
+- **fichiers de trace** (`.trc`) : le détail d'une erreur ou d'une session, écrit par un processus.
+> Depuis la 11g, l'alert log et les traces sont rangés dans l'**ADR** (Automatic Diagnostic Repository), sous `$ORACLE_BASE/diag/rdbms/<base>/<instance>/trace`. L'outil `adrci` permet de les consulter.
+
+## Où les trouver ?
+```sql
+SELECT name FROM v$controlfile;
+SELECT file_name, tablespace_name, bytes FROM dba_data_files;
+SELECT group#, member FROM v$logfile ORDER BY group#;
+SELECT value FROM v$parameter WHERE name = 'diagnostic_dest';
+```
+
+=== EXERCICES
+?? Affichez l'emplacement des fichiers de contrôle de PRODCM.
+>> SELECT name FROM v$controlfile
+~ La vue `V$CONTROLFILE`.
+
+?? Affichez le nom de chaque fichier de données, son tablespace et sa taille en Mo (arrondie).
+>> SELECT file_name, tablespace_name, ROUND(bytes / 1048576) AS mo FROM dba_data_files
+~ 1 Mo = 1 048 576 octets.
+
+?? Affichez le numéro de groupe et le nombre de membres de chaque groupe redo, à partir de `V$LOGFILE`.
+>> SELECT group#, COUNT(*) AS membres FROM v$logfile GROUP BY group#
+~ Un groupe par ligne : `GROUP BY group#`.
+
+=== QUIZ
+? Que contiennent les fichiers de contrôle ?
+- Les données des tables
++ La structure de la base : liste des fichiers, SCN, historique des sauvegardes
+- Les mots de passe des utilisateurs
+- Les paramètres de l'instance
+= C'est le registre de la base. Oracle le lit à l'étape MOUNT.
+
+? Pourquoi multiplexer les fichiers de contrôle ?
+- Pour aller plus vite
++ Pour ne pas dépendre d'un seul disque : une copie survit si l'autre est perdue
+- Parce qu'Oracle l'exige pour démarrer
+- Pour répartir les données
+= Oracle écrit dans toutes les copies. Si une copie est perdue, on la recopie depuis une autre.
+
+? Quel fichier un DBA lit-il en premier quand quelque chose ne va pas ?
+- Le spfile
++ L'alert log
+- Le fichier de mots de passe
+- Les fichiers de données
+= Il trace la vie de l'instance : erreurs ORA-, démarrages, arrêts, changements de paramètres.
+
+? Quelle différence entre spfile et pfile ?
+- Aucune
++ Le spfile est binaire et modifiable par ALTER SYSTEM, le pfile est un fichier texte édité à la main
+- Le pfile est plus récent
+- Le spfile ne contient que les mots de passe
+= `ALTER SYSTEM SET … SCOPE=SPFILE` écrit dans le spfile. Un pfile se modifie avec un éditeur de texte.
+
+? À quoi servent les fichiers d'archives ?
+- À stocker les vieilles données des tables
++ À garder une copie de chaque fichier redo rempli, pour restaurer jusqu'à un instant précis
+- À sauvegarder le spfile
+- À compresser les tables
+= Sans archives (mode NOARCHIVELOG), on ne peut restaurer qu'à l'instant de la dernière sauvegarde complète.

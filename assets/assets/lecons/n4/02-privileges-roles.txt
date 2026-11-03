@@ -1,0 +1,102 @@
+# Privilèges et rôles
+@duree 9
+@resume Privilèges système et objet, rôles, ADMIN OPTION et GRANT OPTION, moindre privilège.
+
+## Deux sortes de privilèges
+- **Privilèges système** : le droit de faire une action dans la base. `CREATE SESSION`, `CREATE TABLE`, `CREATE PROCEDURE`… et les redoutables privilèges `ANY` : `SELECT ANY TABLE`, `DROP ANY TABLE`, qui portent sur **tous** les schémas ;
+- **privilèges objet** : le droit d'agir sur un objet précis. `SELECT`, `INSERT`, `UPDATE`, `DELETE` sur une table, `EXECUTE` sur une procédure.
+```sql
+GRANT CREATE SESSION, CREATE TABLE TO m_kamga;
+GRANT SELECT, UPDATE (salaire) ON app_rh.employes TO m_kamga;
+REVOKE UPDATE ON app_rh.employes FROM m_kamga;
+```
+
+## Les rôles
+Un **rôle** est un paquet de privilèges, qu'on accorde d'un coup :
+```sql
+CREATE ROLE r_lecture_rh;
+GRANT SELECT ON app_rh.employes TO r_lecture_rh;
+GRANT SELECT ON app_rh.services TO r_lecture_rh;
+GRANT r_lecture_rh TO j_fotso, a_ngo;
+```
+- `CONNECT` ne contient plus que CREATE SESSION ; `RESOURCE` permet de créer tables, séquences, procédures… (et ne donne plus UNLIMITED TABLESPACE depuis la 12c) ;
+- `DBA` contient presque tous les privilèges système : à réserver aux administrateurs ;
+- un privilège reçu **par un rôle** ne peut pas être utilisé dans une procédure stockée (qui s'exécute avec les droits de son propriétaire) : il faut un GRANT direct.
+> Le rôle spécial `PUBLIC`, c'est tout le monde. `GRANT … TO PUBLIC` est presque toujours une mauvaise idée.
+
+## Transmettre un droit
+- `WITH ADMIN OPTION` (privilèges système et rôles) : le bénéficiaire peut l'accorder à d'autres. Si on le lui retire, ceux à qui il l'a donné le **gardent** ;
+- `WITH GRANT OPTION` (privilèges objet) : même idée, mais le retrait se fait **en cascade**.
+
+## Le moindre privilège
+Chaque compte ne doit avoir que ce dont il a besoin. Les questions d'un audit de sécurité : qui a le rôle DBA ? Qui a des privilèges ANY ? Quels comptes inutilisés sont encore ouverts ?
+```sql
+SELECT grantee FROM dba_role_privs WHERE granted_role = 'DBA';
+SELECT grantee, privilege FROM dba_sys_privs WHERE privilege LIKE '%ANY%';
+```
+
+=== EXERCICES
+?? Affichez les comptes qui ont le rôle DBA, sauf SYS et SYSTEM.
+>> SELECT grantee FROM dba_role_privs WHERE granted_role = 'DBA' AND grantee NOT IN ('SYS', 'SYSTEM')
+
+?? Affichez le bénéficiaire et le nom des privilèges système qui contiennent le mot ANY.
+>> SELECT grantee, privilege FROM dba_sys_privs WHERE privilege LIKE '%ANY%'
+
+?? Affichez les rôles accordés à J_FOTSO.
+>> SELECT granted_role FROM dba_role_privs WHERE grantee = 'J_FOTSO'
+
+?? Affichez le nom, l'état et le profil des comptes qui ont le rôle DBA, sauf SYS et SYSTEM, avec une jointure entre DBA_USERS et DBA_ROLE_PRIVS.
+>> SELECT u.username, u.account_status, u.profile
+>> FROM dba_users u JOIN dba_role_privs r ON r.grantee = u.username
+>> WHERE r.granted_role = 'DBA' AND u.username NOT IN ('SYS', 'SYSTEM')
+
+=== INCIDENT
+# Un audit de sécurité découvre OLD_BATCH
+@contexte L'auditeur interne vous transmet sa liste. En tête : le compte OLD_BATCH, créé en 2016, a le rôle DBA et le privilège DROP ANY TABLE. Personne ne sait à quoi il sert.
+?! Que vérifiez-vous d'abord ?
+- Rien : vous supprimez le compte avec DROP USER OLD_BATCH CASCADE => Irréversible. Si un vieux traitement l'utilise encore la nuit, il tombera, et vous aurez supprimé ses objets (la procédure P_PURGE) sans moyen de revenir en arrière.
++ S'il est encore utilisé : sessions, dernières connexions, travaux planifiés => Bon réflexe : on mesure l'impact avant d'agir. Pas de session ouverte, son seul objet date de 2016, et l'audit ne montre aucune connexion depuis un an.
+- Son mot de passe, pour vous connecter avec et voir => Se connecter avec le compte d'un autre détruit la traçabilité, et vous n'avez pas son mot de passe.
+?! Le compte semble abandonné. Quelle mesure prenez-vous aujourd'hui ?
++ Vous verrouillez le compte, et vous prévenez les équipes => `ALTER USER old_batch ACCOUNT LOCK;` supprime le risque tout de suite, et reste réversible en une commande si un traitement oublié se manifeste.
+- Vous lui retirez seulement DROP ANY TABLE => Il garde le rôle DBA, qui contient déjà DROP ANY TABLE : le risque reste entier.
+- Vous attendez la fin de l'audit pour décider => Un compte ouvert avec le rôle DBA, c'est une porte grande ouverte. Le verrouillage est sans risque : faites-le maintenant.
+?! Un mois plus tard, personne ne s'est manifesté. Et ensuite ?
++ Vous retirez le rôle DBA et les privilèges ANY, vous exportez le schéma, puis vous le supprimez => Avec une sauvegarde Data Pump de son contenu, la suppression devient sans risque. L'audit est clos proprement.
+- Vous laissez le compte verrouillé pour toujours => Mieux que rien, mais un compte verrouillé avec le rôle DBA reste une cible : il suffit d'un ALTER USER pour le rouvrir.
+
+=== QUIZ
+? Quelle est la différence entre un privilège système et un privilège objet ?
++ Le privilège système autorise une action dans la base, le privilège objet porte sur un objet précis
+- Le privilège objet est réservé à SYS
+- Le privilège système ne concerne que les tables
+- Aucune
+= CREATE TABLE est un privilège système ; SELECT ON app_rh.employes est un privilège objet.
+
+? Pourquoi les privilèges ANY sont-ils dangereux ?
+- Ils sont lents
++ Ils s'appliquent à tous les schémas, y compris ceux des autres applications
+- Ils expirent rapidement
+- Ils ne sont pas audités
+= DROP ANY TABLE permet de supprimer n'importe quelle table de la base, sauf celles de SYS.
+
+? Une procédure de M_KAMGA lit APP_RH.EMPLOYES. M_KAMGA a reçu SELECT par un rôle. Que se passe-t-il à la compilation ?
+- Tout fonctionne
++ La compilation échoue : dans une procédure, seuls les privilèges reçus directement comptent
+- Oracle demande le mot de passe
+- La procédure est créée en lecture seule
+= Il faut `GRANT SELECT ON app_rh.employes TO m_kamga;` directement.
+
+? Vous retirez à A un privilège objet qu'il avait reçu WITH GRANT OPTION et transmis à B. Que devient le droit de B ?
+- B le garde
++ B le perd aussi : le retrait est en cascade
+- B devient propriétaire de l'objet
+- Le retrait échoue
+= Pour les privilèges système avec ADMIN OPTION, au contraire, B le garderait.
+
+? Quel est le principe du moindre privilège ?
+- Donner le rôle DBA à tous les développeurs pour aller plus vite
++ Ne donner à chaque compte que les droits dont il a vraiment besoin
+- Retirer tous les droits la nuit
+- Utiliser un seul compte pour tout le monde
+= Moins un compte a de droits, moins une erreur ou une attaque peut faire de dégâts.

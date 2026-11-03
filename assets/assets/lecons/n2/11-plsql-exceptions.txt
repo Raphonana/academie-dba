@@ -1,0 +1,103 @@
+# SELECT INTO et les exceptions
+@duree 10
+@resume Lire une ligne dans des variables, et traiter les erreurs proprement.
+
+## SELECT INTO
+En PL/SQL, un `SELECT` doit dire où ranger son résultat :
+```sql
+DECLARE
+  v_nom     employes.nom%TYPE;
+  v_salaire employes.salaire%TYPE;
+BEGIN
+  SELECT nom, salaire
+  INTO   v_nom, v_salaire
+  FROM   employes
+  WHERE  id_employe = 3;
+END;
+```
+`SELECT … INTO` exige **exactement une ligne** :
+- zéro ligne : exception `NO_DATA_FOUND` (ORA-01403) ;
+- plus d'une ligne : exception `TOO_MANY_ROWS` (ORA-01422).
+> Un `SELECT COUNT(*) INTO …` ne lève jamais NO_DATA_FOUND : un agrégat sans GROUP BY renvoie toujours une ligne.
+
+## La section EXCEPTION
+Quand une erreur survient, Oracle quitte la section BEGIN et cherche un gestionnaire dans la section EXCEPTION :
+```sql
+BEGIN
+  SELECT nom INTO v_nom FROM employes WHERE id_employe = p_id;
+EXCEPTION
+  WHEN NO_DATA_FOUND THEN
+    v_nom := 'inconnu';
+  WHEN TOO_MANY_ROWS THEN
+    RAISE_APPLICATION_ERROR(-20001, 'Identifiant en double : ' || p_id);
+END;
+```
+Exceptions prédéfinies les plus courantes : `NO_DATA_FOUND`, `TOO_MANY_ROWS`, `ZERO_DIVIDE`, `DUP_VAL_ON_INDEX` (ORA-00001), `VALUE_ERROR` (valeur trop longue ou conversion impossible), `INVALID_NUMBER`.
+
+## Lever ses propres erreurs
+- `RAISE_APPLICATION_ERROR(-20000 à -20999, 'message')` arrête le traitement avec un code et un message lisibles par l'application ;
+- on peut aussi déclarer une exception : `e_solde EXCEPTION;`, la lever avec `RAISE e_solde;` et la traiter avec `WHEN e_solde THEN`.
+`SQLCODE` et `SQLERRM` donnent le code et le message de l'erreur en cours ; `DBMS_UTILITY.FORMAT_ERROR_BACKTRACE` donne la ligne où elle s'est produite.
+
+## Le piège de WHEN OTHERS THEN NULL
+```sql
+EXCEPTION
+  WHEN OTHERS THEN
+    NULL;   -- on avale toutes les erreurs
+```
+! Ce code cache **toutes** les erreurs : contrainte violée, disque plein, données corrompues… Le programme continue comme si tout allait bien, et le problème apparaît des semaines plus tard, impossible à retrouver. Un `WHEN OTHERS` doit au minimum journaliser l'erreur, puis la relancer avec `RAISE;`.
+```sql
+EXCEPTION
+  WHEN OTHERS THEN
+    journaliser(SQLERRM, DBMS_UTILITY.FORMAT_ERROR_BACKTRACE);
+    RAISE;
+```
+
+=== QUIZ
+? Un `SELECT … INTO` ne trouve aucune ligne. Quelle exception est levée ?
++ NO_DATA_FOUND
+- TOO_MANY_ROWS
+- VALUE_ERROR
+- Aucune : les variables valent NULL
+= ORA-01403 : no data found. Il faut la traiter si l'absence de ligne est un cas normal.
+
+? Que se passe-t-il ici avec notre table ?
+| SELECT nom INTO v_nom
+| FROM   employes
+| WHERE  id_service = 20;
+- v_nom vaut NGO
+- v_nom vaut FOTSO
++ TOO_MANY_ROWS : le service 20 a deux employés
+- NO_DATA_FOUND
+= SELECT INTO exige exactement une ligne. Ici il y en a deux : ORA-01422.
+
+? Ce bloc peut-il lever NO_DATA_FOUND ?
+| SELECT COUNT(*) INTO v_nb
+| FROM   employes
+| WHERE  id_service = 99;
+- Oui, car le service 99 n'existe pas
++ Non : COUNT(*) renvoie toujours une ligne, ici avec la valeur 0
+- Oui, sauf si on ajoute GROUP BY
+- Non, car v_nb est un NUMBER
+= Un agrégat sans GROUP BY renvoie une ligne même quand aucune ligne ne correspond.
+
+? Quelle plage de codes est réservée à RAISE_APPLICATION_ERROR ?
+- 1 à 999
+- -1 à -999
++ -20000 à -20999
+- 20000 à 29999
+= Ces codes sont libres pour les erreurs de l'application.
+
+? Pourquoi `WHEN OTHERS THEN NULL;` est-il dangereux ?
+- Il est plus lent
++ Il cache toutes les erreurs, qui deviennent impossibles à diagnostiquer
+- Il provoque un COMMIT
+- Il n'est pas accepté par le compilateur
+= Une erreur avalée ne laisse aucune trace. Journalisez, puis relancez avec RAISE.
+
+? Que fait `RAISE;` seul, dans une section EXCEPTION ?
+- Il lève NO_DATA_FOUND
++ Il relance l'erreur en cours vers l'appelant
+- Il ignore l'erreur
+- Il redémarre le bloc
+= Après avoir journalisé, on laisse l'erreur remonter pour que l'appelant sache que l'opération a échoué.

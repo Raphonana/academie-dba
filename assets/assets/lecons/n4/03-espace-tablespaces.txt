@@ -1,0 +1,118 @@
+# Gérer l'espace des tablespaces
+@duree 10
+@resume Surveiller le remplissage, ajouter un fichier, agrandir, et réagir à ORA-01653.
+
+## Le taux de remplissage
+La requête que tout DBA connaît par cœur compare la taille des fichiers à l'espace libre :
+```sql
+SELECT d.tablespace_name,
+       ROUND(d.total / 1048576)                         AS total_mo,
+       ROUND(NVL(f.libre, 0) / 1048576)                 AS libre_mo,
+       ROUND(100 * (d.total - NVL(f.libre, 0)) / d.total, 1) AS pct_utilise
+FROM  (SELECT tablespace_name, SUM(bytes) AS total
+       FROM dba_data_files GROUP BY tablespace_name) d
+LEFT JOIN
+      (SELECT tablespace_name, SUM(bytes) AS libre
+       FROM dba_free_space GROUP BY tablespace_name) f
+ON f.tablespace_name = d.tablespace_name
+ORDER BY pct_utilise DESC;
+```
+! Un tablespace à 97 % n'est pas forcément en danger si ses fichiers sont en **autoextend** avec de la marge (`MAXBYTES`) et que le disque a de la place. À l'inverse, un fichier sans autoextend se bloque net quand il est plein.
+
+## Donner de la place
+Trois solutions, à choisir selon la situation :
+```sql
+-- 1. Ajouter un fichier
+ALTER TABLESPACE app_data
+  ADD DATAFILE '/u02/oradata/PRODCM/app_data03.dbf' SIZE 10G
+  AUTOEXTEND ON NEXT 1G MAXSIZE 32G;
+
+-- 2. Agrandir un fichier existant
+ALTER DATABASE DATAFILE '/u02/oradata/PRODCM/users01.dbf' RESIZE 2G;
+
+-- 3. Activer l'extension automatique
+ALTER DATABASE DATAFILE '/u02/oradata/PRODCM/app_index01.dbf'
+  AUTOEXTEND ON NEXT 512M MAXSIZE 32G;
+```
+> Avec des blocs de 8 Ko, un fichier ordinaire (smallfile) ne peut pas dépasser **32 Go** (4 194 303 blocs). Au-delà, il faut un autre fichier, ou un tablespace bigfile.
+Avant d'agrandir, vérifiez **toujours** la place libre sur le système de fichiers (`df -h`) : un autoextend qui remplit le disque à 100 % peut bloquer bien plus que ce tablespace.
+
+## Les erreurs d'espace
+- **ORA-01653: unable to extend table X by N in tablespace Y** : une table ne peut plus grandir ;
+- **ORA-01654** : même chose pour un index ;
+- **ORA-01688** : pour une partition de table ;
+- **ORA-01536: space quota exceeded for tablespace** : ce n'est pas le tablespace qui est plein, c'est le quota de l'utilisateur.
+Oracle surveille lui-même les seuils : alerte à **85 %**, alerte critique à **97 %** par défaut, visibles dans `DBA_OUTSTANDING_ALERTS` et dans Enterprise Manager.
+
+=== EXERCICES
+?? Affichez chaque tablespace et son pourcentage d'utilisation (arrondi à une décimale), du plus rempli au moins rempli.
+>> SELECT d.tablespace_name, ROUND(100 * (d.total - NVL(f.libre, 0)) / d.total, 1) AS pct
+>> FROM (SELECT tablespace_name, SUM(bytes) AS total FROM dba_data_files GROUP BY tablespace_name) d
+>> LEFT JOIN (SELECT tablespace_name, SUM(bytes) AS libre FROM dba_free_space GROUP BY tablespace_name) f
+>> ON f.tablespace_name = d.tablespace_name
+>> ORDER BY pct DESC
+~ Totalisez DBA_DATA_FILES et DBA_FREE_SPACE par tablespace dans deux sous-requêtes, puis joignez-les.
+
+?? Affichez le nom, le tablespace et la taille en Go des fichiers de données qui ne sont pas en autoextend.
+>> SELECT file_name, tablespace_name, bytes / 1073741824 AS go FROM dba_data_files WHERE autoextensible = 'NO'
+
+?? Affichez l'espace libre en Mo de chaque tablespace.
+>> SELECT tablespace_name, SUM(bytes) / 1048576 AS libre_mo FROM dba_free_space GROUP BY tablespace_name
+
+?? Affichez le nom et la taille en Mo des segments du tablespace APP_DATA, du plus gros au plus petit.
+>> SELECT owner, segment_name, bytes / 1048576 AS mo FROM dba_segments WHERE tablespace_name = 'APP_DATA' ORDER BY bytes DESC
+
+=== INCIDENT
+# ORA-01653 un lundi matin
+@contexte Lundi, 8 h 10. Les caisses ne peuvent plus enregistrer de ventes. L'application affiche : ORA-01653: unable to extend table APP_VENTES.LIGNES_VENTES by 1024 in tablespace APP_DATA.
+?! Que regardez-vous en premier ?
++ Le remplissage du tablespace APP_DATA et l'état de ses fichiers => C'est le cœur du problème : APP_DATA est à 97,6 %, ses deux fichiers font 30 Go et aucun n'est en autoextend.
+- Les sessions bloquées => Il n'y a pas de blocage : l'erreur dit clairement qu'Oracle n'a plus de place.
+- La sauvegarde de la nuit => Elle est importante, mais ce n'est pas ce qui arrête les caisses.
+?! Quelle solution appliquez-vous ?
+- Agrandir app_data01.dbf à 60 Go => Impossible : avec des blocs de 8 Ko, un fichier ordinaire ne dépasse pas 32 Go. Oracle répondrait ORA-01144.
++ Ajouter un fichier app_data03.dbf de 10 Go, en autoextend jusqu'à 32 Go => La table peut de nouveau grandir, les ventes repartent. Le nouveau fichier grossira ensuite tout seul, par paliers.
+- Supprimer en urgence les vieilles lignes de AUDIT_LOG => Un DELETE de plusieurs Go en pleine journée génère énormément de redo et d'undo, et ne rend pas l'espace aux autres tables : la ligne des hautes eaux ne bouge pas.
+?! Avant de lancer la commande, que vérifiez-vous ?
++ La place libre sur le système de fichiers /u02 => `df -h /u02` montre 18 Go libres : 10 Go maintenant, avec de la marge pour l'autoextend. Sans cette vérification, vous risqueriez de remplir le disque.
+- Que personne n'est connecté => Inutile : ajouter un fichier se fait base ouverte, sans gêner personne.
+- La version d'Oracle => Sans rapport avec cette opération.
+?! Les caisses fonctionnent de nouveau. Que reste-t-il à faire ?
++ Comprendre la croissance, et mettre en place une alerte à 85 % => AUDIT_LOG fait 8,4 Go et n'est jamais purgée : une politique de purge (ou de partitionnement) s'impose. Avec une alerte à 85 %, vous l'auriez vu venir plusieurs semaines avant.
+- Rien, le problème est réglé => Il reviendra, et peut-être un samedi soir.
+
+=== QUIZ
+? Un tablespace est à 97 %, ses fichiers sont en autoextend jusqu'à 32 Go et en font 5. Est-ce urgent ?
+- Oui, il faut ajouter un fichier immédiatement
++ Pas forcément : il peut encore grandir, si le disque a de la place
+- Oui, il faut redémarrer la base
+- Non, un tablespace ne se remplit jamais
+= Le pourcentage seul ne suffit pas : regardez aussi l'autoextend, MAXBYTES et le disque.
+
+? Quelle est la taille maximale d'un fichier de données ordinaire avec des blocs de 8 Ko ?
+- 2 Go
+- 16 Go
++ 32 Go
+- Illimitée
+= 4 194 303 blocs de 8 Ko. Un tablespace bigfile va jusqu'à 32 To.
+
+? Un utilisateur reçoit ORA-01536. Que faut-il faire ?
+- Ajouter un fichier au tablespace
++ Augmenter son quota sur ce tablespace
+- Redémarrer la base
+- Agrandir la SGA
+= Le tablespace a de la place ; c'est l'utilisateur qui a atteint sa limite.
+
+? Avant d'agrandir un fichier de données, que faut-il toujours vérifier ?
+- La version d'Oracle
++ La place libre sur le système de fichiers
+- Le nombre de sessions
+- La taille de la SGA
+= Remplir un disque à 100 % peut bloquer bien d'autres choses : archives, traces, autres bases.
+
+? Ajouter un fichier à un tablespace nécessite-t-il d'arrêter la base ?
+- Oui, toujours
++ Non, cela se fait base ouverte
+- Seulement pour le tablespace SYSTEM
+- Seulement en NOARCHIVELOG
+= ALTER TABLESPACE … ADD DATAFILE se fait en pleine journée, sans interruption.

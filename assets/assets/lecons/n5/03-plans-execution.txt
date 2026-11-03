@@ -1,0 +1,86 @@
+# Lire un plan d'exécution
+@duree 10
+@resume EXPLAIN PLAN, DBMS_XPLAN, l'ordre de lecture, le coût et la cardinalité.
+
+## Qu'est-ce qu'un plan ?
+Pour exécuter une requête, l'optimiseur choisit un **plan d'exécution** : par quelle table commencer, avec quel index, comment joindre. Le même SQL peut s'exécuter en 10 ms ou en 10 minutes selon le plan choisi. Lire un plan est **la** compétence de base du tuning.
+
+## Obtenir le plan
+```sql
+-- Le plan prévu, sans exécuter la requête
+EXPLAIN PLAN FOR
+SELECT * FROM lignes_ventes WHERE id_vente = 98231;
+SELECT * FROM TABLE(DBMS_XPLAN.DISPLAY);
+
+-- Le plan réellement utilisé, à partir du cache
+SELECT * FROM TABLE(DBMS_XPLAN.DISPLAY_CURSOR('g0bggfqrddc4w', NULL, 'ALLSTATS LAST'));
+```
+! `EXPLAIN PLAN` montre ce que l'optimiseur **prévoit**, pas toujours ce qu'il fait réellement (les variables de liaison, par exemple, peuvent changer le choix). `DISPLAY_CURSOR` montre le plan **réellement** utilisé : c'est lui qu'il faut regarder en priorité.
+
+## Lire le plan
+```sql
+--------------------------------------------------------------------------------
+| Id | Operation                    | Name             | Rows  | Cost | A-Rows |
+--------------------------------------------------------------------------------
+|  0 | SELECT STATEMENT             |                  |       |  412 |      3 |
+|  1 |  NESTED LOOPS                |                  |     3 |  412 |      3 |
+|  2 |   TABLE ACCESS BY INDEX ROWID| VENTES           |     1 |    3 |      1 |
+|* 3 |    INDEX UNIQUE SCAN         | PK_VENTES        |     1 |    2 |      1 |
+|  4 |   TABLE ACCESS BY INDEX ROWID| LIGNES_VENTES    |     3 |  409 |      3 |
+|* 5 |    INDEX RANGE SCAN          | PK_LIGNES_VENTES |     3 |    4 |      3 |
+--------------------------------------------------------------------------------
+```
+- Le plan est un **arbre** : une opération reçoit les lignes de ses enfants, plus indentés qu'elle ;
+- on commence par l'opération **la plus indentée et la plus haute** : ici l'opération 3, puis 2, puis 5, puis 4, puis la jointure 1 ;
+- `Rows` (ou E-Rows) : le nombre de lignes que l'optimiseur **estime** ;
+- `A-Rows` : le nombre de lignes **réellement** obtenues (avec `ALLSTATS LAST` et le hint `GATHER_PLAN_STATISTICS`) ;
+- `Cost` : une estimation interne du travail. Elle sert à comparer des plans pour une même requête, jamais deux requêtes différentes ;
+- l'étoile `*` renvoie à la section **Predicate Information**, sous le plan, qui dit quels filtres s'appliquent où.
+> La clé du diagnostic : comparer **E-Rows et A-Rows**. Quand l'optimiseur estime 1 ligne et en obtient 2 millions, il a choisi son plan sur une hypothèse fausse : souvent des statistiques périmées ou absentes.
+
+## Le plan_hash_value
+Chaque plan a une empreinte numérique, le `PLAN_HASH_VALUE`, visible dans `V$SQL`. Si une requête lente avait hier un autre plan_hash_value, c'est que **son plan a changé**.
+
+=== EXERCICES
+?? Affichez le sql_id, le plan_hash_value et le nombre d'exécutions de la requête dont le texte contient `TRUNC(l.date_vente)`.
+>> SELECT sql_id, plan_hash_value, executions FROM v$sql WHERE sql_text LIKE '%TRUNC(l.date_vente)%'
+
+?? Plusieurs requêtes différentes partagent-elles le même plan ? Affichez chaque plan_hash_value utilisé par plus d'une requête, avec le nombre de requêtes.
+>> SELECT plan_hash_value, COUNT(*) FROM v$sql GROUP BY plan_hash_value HAVING COUNT(*) > 1
+~ `GROUP BY plan_hash_value HAVING COUNT(*) > 1`. Des requêtes qui ne diffèrent que par une valeur partagent le même plan : un indice pour la leçon sur les variables de liaison.
+
+=== QUIZ
+? Quelle est la différence entre EXPLAIN PLAN et DBMS_XPLAN.DISPLAY_CURSOR ?
++ EXPLAIN PLAN montre le plan prévu ; DISPLAY_CURSOR le plan réellement utilisé, pris dans le cache
+- Aucune
+- DISPLAY_CURSOR exécute la requête
+- EXPLAIN PLAN est réservé à SYS
+= Le plan réel peut différer du plan prévu, notamment à cause des variables de liaison.
+
+? Par quelle opération un plan commence-t-il ?
+- Toujours la ligne Id 0
+- La dernière ligne du plan
++ L'opération la plus indentée, en partant du haut
+- L'opération qui a le plus gros coût
+= On remonte ensuite vers les opérations parentes.
+
+? L'optimiseur estime 1 ligne, la requête en produit 2 millions. Que soupçonnez-vous ?
+- Un bug d'affichage
++ Des statistiques fausses ou périmées, qui ont conduit à un mauvais plan
+- Un disque lent
+- Un verrou
+= Comparer E-Rows et A-Rows est la clé du diagnostic.
+
+? Peut-on comparer le coût de deux requêtes différentes ?
+- Oui, le coût est en millisecondes
++ Non : le coût sert seulement à comparer des plans possibles pour une même requête
+- Oui, si elles lisent la même table
+- Seulement en 19c
+= Le coût est une estimation interne de l'optimiseur, pas un temps.
+
+? Une requête est lente aujourd'hui et son plan_hash_value a changé depuis hier. Qu'est-ce que cela signifie ?
++ L'optimiseur a choisi un autre plan d'exécution
+- La requête a été modifiée
+- La table a été supprimée
+- Le serveur a redémarré
+= Il faut trouver pourquoi : nouvelles statistiques, nouvel index, valeur de variable différente…

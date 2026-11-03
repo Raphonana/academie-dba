@@ -1,0 +1,98 @@
+# Les transactions
+@duree 9
+@resume COMMIT, ROLLBACK, SAVEPOINT, la lecture cohérente et les verrous.
+
+## Tout ou rien
+Un virement bancaire, c'est deux opérations : débiter un compte et en créditer un autre. Si la panne survient entre les deux, l'argent disparaît. Une **transaction** regroupe plusieurs modifications qui doivent réussir **ensemble** ou être annulées **ensemble**.
+```sql
+UPDATE comptes SET solde = solde - 50000 WHERE id_compte = 101;
+UPDATE comptes SET solde = solde + 50000 WHERE id_compte = 202;
+COMMIT;
+```
+
+## COMMIT et ROLLBACK
+- Dans Oracle, une transaction commence **automatiquement** à la première modification (DML) ;
+- `COMMIT` la valide : les changements deviennent définitifs et visibles par tous ;
+- `ROLLBACK` l'annule : la base revient à l'état du dernier `COMMIT`.
+> En cas de panne de courant après un `COMMIT`, les données sont sûres : Oracle les a écrites dans les fichiers **redo** avant de vous répondre. Nous verrons ce mécanisme au niveau Architecture.
+
+## SAVEPOINT
+Un point de sauvegarde permet d'annuler seulement une partie du travail :
+```sql
+UPDATE employes SET salaire = salaire * 1.10 WHERE id_service = 20;
+SAVEPOINT apres_info;
+DELETE FROM employes WHERE id_employe = 5;
+ROLLBACK TO apres_info;    -- annule le DELETE, garde l'UPDATE
+COMMIT;
+```
+
+## Le COMMIT implicite du DDL
+! Toute instruction DDL (`CREATE`, `ALTER`, `DROP`, `TRUNCATE`…) fait un **COMMIT automatique** avant et après elle. Si vous faites un `DELETE`, puis un `CREATE TABLE`, le `DELETE` est validé et un `ROLLBACK` ne le récupère plus.
+Dans SQL*Plus, quitter normalement avec `EXIT` valide aussi la transaction en cours. Si la session est coupée brutalement, Oracle l'annule.
+
+## Ce que voient les autres sessions
+Tant que vous n'avez pas fait `COMMIT`, **vous seul** voyez vos modifications. Les autres sessions continuent de voir les anciennes valeurs : c'est la **lecture cohérente**. Dans Oracle, une lecture ne bloque jamais une écriture, et une écriture ne bloque jamais une lecture.
+
+## Les verrous
+Quand vous modifiez une ligne, Oracle la **verrouille** jusqu'à votre `COMMIT` ou `ROLLBACK`. Si un collègue tente de modifier la même ligne, sa session **attend**. C'est une cause fréquente d'appels au DBA : « l'application est bloquée », alors qu'une session a simplement oublié de valider.
+> Oracle verrouille ligne par ligne, pas la table entière : deux sessions peuvent modifier deux lignes différentes de la même table en même temps.
+
+=== QUIZ
+? Quand une transaction commence-t-elle dans Oracle ?
+- Avec l'instruction BEGIN TRANSACTION
++ Automatiquement, à la première instruction DML
+- À la connexion
+- Au premier SELECT
+= Oracle n'a pas besoin de `BEGIN TRANSACTION` : la première modification ouvre la transaction.
+
+? Vous faites un DELETE, puis un CREATE TABLE, puis un ROLLBACK. Le DELETE est-il annulé ?
+- Oui
++ Non, le CREATE TABLE a fait un COMMIT implicite
+- Oui, mais seulement si la table créée est vide
+- Le ROLLBACK provoque une erreur
+= Le DDL valide automatiquement le travail en cours, y compris le `DELETE`.
+
+? Une session modifie une ligne sans faire COMMIT. Que voit une autre session qui lit cette ligne ?
+- La nouvelle valeur
++ L'ancienne valeur, validée
+- Une erreur de verrou
+- Elle attend que la première session valide
+= Grâce à la lecture cohérente, les autres sessions voient la dernière version validée, sans attendre.
+
+? Que fait `ROLLBACK TO apres_info;` ?
+- Il annule toute la transaction
++ Il annule les modifications faites après le point de sauvegarde apres_info
+- Il valide tout jusqu'à apres_info
+- Il supprime le point de sauvegarde sans rien annuler
+= Seul le travail fait après le `SAVEPOINT` est annulé. La transaction reste ouverte.
+
+? Un utilisateur se plaint que son écran « tourne » en modifiant un client. Cause probable ?
+- Le disque est plein
++ Une autre session a modifié la même ligne sans faire COMMIT, et il attend le verrou
+- Le SELECT est bloqué par une écriture
+- La table est en corbeille
+= Une modification attend que le verrou sur la ligne soit libéré. Le DBA cherche alors la session qui bloque.
+
+=== EXERCICES
+?? Augmentez de 5 % le salaire de Jean FOTSO (n° 3) et validez. Ensuite, mettez le salaire de NGO (n° 2) à 1, puis annulez cette seconde modification.
+>> UPDATE employes SET salaire = salaire * 1.05 WHERE id_employe = 3;
+>> COMMIT;
+>> UPDATE employes SET salaire = 1 WHERE id_employe = 2;
+>> ROLLBACK;
+== SELECT id_employe, salaire FROM employes ORDER BY id_employe
+~ `COMMIT` valide, `ROLLBACK` annule tout ce qui suit le dernier COMMIT.
+
+?? Supprimez BELLO (n° 5), posez un savepoint `sp1`, supprimez FOTSO (n° 3), revenez au savepoint, puis validez.
+>> DELETE FROM employes WHERE id_employe = 5;
+>> SAVEPOINT sp1;
+>> DELETE FROM employes WHERE id_employe = 3;
+>> ROLLBACK TO sp1;
+>> COMMIT;
+== SELECT id_employe FROM employes ORDER BY id_employe
+
+?? Mettez le salaire de MBARGA (n° 1) à 2 000 000, créez une table `journal (msg VARCHAR2(100))`, puis faites ROLLBACK. Le salaire a-t-il été annulé ?
+>> UPDATE employes SET salaire = 2000000 WHERE id_employe = 1;
+>> CREATE TABLE journal (msg VARCHAR2(100));
+>> ROLLBACK;
+== SELECT id_employe, salaire FROM employes ORDER BY id_employe
+~ Le CREATE TABLE fait un COMMIT implicite : le ROLLBACK arrive trop tard.

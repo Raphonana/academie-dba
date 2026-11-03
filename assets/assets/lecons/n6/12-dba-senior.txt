@@ -1,0 +1,67 @@
+# Le métier de DBA senior
+@duree 8
+@resume Changements maîtrisés, procédures, retours d'expérience, automatisation, cloud et certification.
+
+## Au-delà de la technique
+Ce qui distingue un DBA senior n'est pas seulement de connaître plus de commandes. C'est sa façon de travailler : il **prévient** plutôt que de réparer, il **documente**, il **explique**, et il garde son calme à 3 h du matin.
+
+## Maîtriser les changements
+La plupart des incidents de production suivent un changement : une livraison, un paramètre, un correctif. Un DBA senior applique une discipline simple :
+- **préparer** : ce qu'on change, pourquoi, l'impact attendu, la durée, et surtout le **retour arrière** ;
+- **tester** sur un environnement identique ;
+- **planifier** avec les équipes concernées, au bon moment ;
+- **exécuter** en suivant la procédure, sans improviser ;
+- **vérifier** que tout fonctionne, puis **communiquer**.
+Les procédures écrites (*runbooks*) pour les opérations courantes et les incidents connus permettent à n'importe quel membre de l'équipe d'agir correctement, même sous pression.
+
+## Apprendre des incidents
+Après chaque incident sérieux, on écrit un **retour d'expérience** (*post-mortem*) : ce qui s'est passé, minute par minute ; la cause profonde ; ce qui a bien fonctionné ; ce qu'on change pour que cela ne se reproduise pas.
+> Un bon retour d'expérience est **sans recherche de coupable** : on cherche ce qui a permis à l'erreur de se produire (procédure absente, contrôle manquant, alerte mal réglée), pas qui l'a commise. Sinon, la prochaine fois, personne n'osera dire ce qui s'est vraiment passé.
+
+## Automatiser
+Tout ce qui se fait plus de deux fois à la main mérite d'être automatisé : création de bases, contrôles du matin, rafraîchissements de test, application des correctifs. Scripts shell et SQL, Ansible, Enterprise Manager, outils maison : l'important est que ce soit **fiable, documenté et versionné**. Le temps gagné va à l'architecture, à la sécurité et à la performance.
+
+## Le cloud et les nouvelles versions
+Le métier évolue :
+- **Oracle Cloud** (OCI), **Autonomous Database**, Exadata en cloud, et les bases Oracle chez les autres fournisseurs de cloud : certaines tâches (correctifs, sauvegardes) sont automatisées, d'autres (architecture, performance, sécurité, coûts) prennent plus d'importance ;
+- la **23ai**, prochaine version à support long terme après la 19c, apporte entre autres le type BOOLEAN en SQL, la recherche vectorielle pour l'IA, et la fin définitive des bases non-CDB.
+
+## Se faire reconnaître
+Les certifications d'Oracle valident les connaissances : pour la 19c, l'**OCA** puis l'**OCP** (examens *Oracle Database Administration I et II*). Elles ne remplacent pas l'expérience, mais elles structurent l'apprentissage et rassurent les employeurs.
+Et surtout : continuez à pratiquer. Installez Oracle Database Free sur votre ordinateur, cassez-la, réparez-la. Chaque incident résolu en test est un incident que vous saurez gérer en production.
+
+=== QUIZ
+? Quelle est la cause la plus fréquente des incidents de production ?
+- Les pannes matérielles
++ Les changements : livraisons, paramètres, correctifs
+- Les attaques informatiques
+- Les utilisateurs trop nombreux
+= D'où l'importance d'une gestion rigoureuse des changements.
+
+? Que doit toujours prévoir la préparation d'un changement ?
+- Un message aux utilisateurs uniquement
++ Le retour arrière, en plus de l'impact et de la durée
+- Un redémarrage du serveur
+- Une augmentation de la SGA
+= Sans plan de retour arrière, un changement raté devient un incident.
+
+? Qu'est-ce qu'un retour d'expérience « sans recherche de coupable » ?
++ Une analyse qui cherche ce qui a permis l'erreur, pas qui l'a commise
+- Une analyse sans conclusion
+- Une analyse faite par un prestataire
+- Une analyse cachée à la direction
+= C'est la condition pour que chacun dise honnêtement ce qui s'est passé.
+
+? Que faut-il automatiser en priorité ?
+- Rien, tout doit rester manuel
++ Les tâches répétitives : contrôles quotidiens, rafraîchissements, créations de bases, correctifs
+- Seulement les sauvegardes
+- Seulement les rapports AWR
+= Le temps gagné va aux sujets à forte valeur : architecture, sécurité, performance.
+
+? Quelle est la prochaine version d'Oracle à support long terme après la 19c ?
+- 20c
+- 21c
++ 23ai
+- 22c
+= La 21c est une version d'innovation, à support court.

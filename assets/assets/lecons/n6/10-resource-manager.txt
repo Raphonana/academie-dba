@@ -1,0 +1,74 @@
+# Le Resource Manager
+@duree 8
+@resume Partager le CPU entre applications, limiter les requêtes folles, et l'instance caging.
+
+## Pourquoi ?
+Sans règle, toutes les sessions se partagent le processeur au hasard. Un rapport mal écrit lancé à 10 h peut ralentir les caisses de tous les magasins. Le **Resource Manager** (inclus dans l'Enterprise Edition) permet de dire qui passe en priorité.
+
+## Les notions
+- un **groupe de consommateurs** (consumer group) : un ensemble de sessions qui se ressemblent, par exemple `CAISSE`, `RAPPORTS`, `BATCH` ;
+- des **règles d'affectation** : une session rejoint un groupe selon son utilisateur, son service, son module ou sa machine ;
+- un **plan** : les directives de partage entre groupes, par exemple 70 % du CPU pour CAISSE, 20 % pour RAPPORTS, 10 % pour le reste. Ces parts ne s'appliquent que **quand le CPU est saturé** : le reste du temps, chacun prend ce qu'il veut.
+```sql
+BEGIN
+  DBMS_RESOURCE_MANAGER.CREATE_PENDING_AREA;
+  DBMS_RESOURCE_MANAGER.CREATE_CONSUMER_GROUP('CAISSE', 'Les caisses des magasins');
+  DBMS_RESOURCE_MANAGER.CREATE_CONSUMER_GROUP('RAPPORTS', 'Rapports et extractions');
+  DBMS_RESOURCE_MANAGER.CREATE_PLAN('PLAN_JOUR', 'Priorité aux caisses en journée');
+  DBMS_RESOURCE_MANAGER.CREATE_PLAN_DIRECTIVE('PLAN_JOUR', 'CAISSE', mgmt_p1 => 70);
+  DBMS_RESOURCE_MANAGER.CREATE_PLAN_DIRECTIVE('PLAN_JOUR', 'RAPPORTS', mgmt_p1 => 20,
+    switch_group => 'CANCEL_SQL', switch_time => 1800);
+  DBMS_RESOURCE_MANAGER.CREATE_PLAN_DIRECTIVE('PLAN_JOUR', 'OTHER_GROUPS', mgmt_p1 => 10);
+  DBMS_RESOURCE_MANAGER.SUBMIT_PENDING_AREA;
+END;
+/
+ALTER SYSTEM SET resource_manager_plan = 'PLAN_JOUR';
+```
+Ici, une requête de rapport qui dépasse 30 minutes est automatiquement annulée.
+
+## Ce qu'on peut encadrer
+- les **parts de CPU** entre groupes ;
+- le **degré de parallélisme** maximal ;
+- le **temps d'exécution** maximal d'une requête, ou son passage dans un groupe moins prioritaire ;
+- le **nombre de sessions actives** d'un groupe (les autres attendent leur tour) ;
+- le **temps d'inactivité** maximal d'une session, ou d'une session qui bloque les autres.
+
+## L'instance caging
+Sur un serveur qui héberge plusieurs instances, on limite chacune à un nombre de processeurs : `CPU_COUNT = 4` plus un plan Resource Manager actif. L'instance ne peut alors pas consommer plus de 4 processeurs, même si le serveur en a 32. Simple, et très efficace pour la consolidation.
+> Le Resource Manager se surveille avec `V$RSRC_CONSUMER_GROUP` et l'événement d'attente `resmgr:cpu quantum` : une session qui l'attend est freinée volontairement par le plan.
+
+=== QUIZ
+? Quand les parts de CPU d'un plan Resource Manager s'appliquent-elles ?
+- Tout le temps
++ Seulement quand le CPU est saturé
+- Seulement la nuit
+- Seulement en RAC
+= Tant qu'il reste du CPU libre, chaque groupe peut l'utiliser.
+
+? Qu'est-ce qu'un groupe de consommateurs ?
++ Un ensemble de sessions traitées de la même façon par le plan
+- Un groupe d'utilisateurs qui payent la licence
+- Une liste de tables
+- Un tablespace
+= Les sessions y sont affectées selon leur utilisateur, service, module ou machine.
+
+? Comment annuler automatiquement une requête de rapport qui dure plus de 30 minutes ?
+- Avec un trigger
++ Avec une directive de plan qui bascule vers CANCEL_SQL après 1800 secondes
+- Avec un profil utilisateur
+- C'est impossible
+= switch_group => 'CANCEL_SQL', switch_time => 1800.
+
+? Que fait l'instance caging ?
+- Il enferme la base dans un conteneur
++ Il limite une instance à un nombre de processeurs avec CPU_COUNT et un plan actif
+- Il chiffre l'instance
+- Il bloque les connexions
+= Très utile quand plusieurs instances partagent un même serveur.
+
+? Une session attend sur « resmgr:cpu quantum ». Que se passe-t-il ?
++ Le Resource Manager la freine volontairement, selon le plan actif
+- Elle attend un verrou
+- Elle attend le disque
+- Elle est bloquée par un bug
+= C'est le signe que le plan fonctionne, et que le CPU est saturé.

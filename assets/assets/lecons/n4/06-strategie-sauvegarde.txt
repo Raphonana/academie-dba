@@ -1,0 +1,74 @@
+# Une stratégie de sauvegarde
+@duree 9
+@resume RPO, RTO, sauvegardes physiques et logiques, complètes et incrémentales, et la règle 3-2-1.
+
+## Deux questions avant tout
+Une stratégie de sauvegarde répond à deux questions posées aux responsables métier, pas aux techniciens :
+- **RPO** (Recovery Point Objective) : combien de données peut-on accepter de perdre ? Une heure ? Zéro ?
+- **RTO** (Recovery Time Objective) : combien de temps peut-on rester arrêté ? Quatre heures ? Dix minutes ?
+Un RPO de zéro et un RTO de quelques minutes ne s'obtiennent pas avec des sauvegardes seules : il faut une base de secours (Data Guard, au niveau Senior).
+
+## Physique ou logique
+- **Sauvegarde physique** (RMAN) : une copie des fichiers de la base. Elle permet de tout restaurer, jusqu'à la dernière transaction ou à une heure précise. C'est **la** sauvegarde ;
+- **sauvegarde logique** (Data Pump) : un export des objets et des données. Utile pour copier un schéma ou récupérer une table, mais elle ne restaure qu'à l'instant de l'export.
+! Un export Data Pump n'est **pas** une stratégie de sauvegarde : tout ce qui s'est passé depuis l'export est perdu.
+
+## À chaud ou à froid
+- **à froid** : base arrêtée, on copie les fichiers. Simple, mais il faut arrêter la base ;
+- **à chaud** : base ouverte, avec RMAN. Possible seulement en mode **ARCHIVELOG** : les archives permettent de rendre cohérents des fichiers copiés pendant qu'ils changeaient.
+
+## Complète ou incrémentale
+- **niveau 0** : tous les blocs utilisés. C'est la base de toute stratégie incrémentale ;
+- **niveau 1 différentielle** (par défaut) : les blocs modifiés depuis la dernière sauvegarde de niveau 0 **ou** 1 ;
+- **niveau 1 cumulative** : les blocs modifiés depuis le dernier niveau 0. Plus grosse, mais plus rapide à restaurer.
+Exemple courant : niveau 0 le dimanche, niveau 1 chaque nuit, archives toutes les heures. Le **block change tracking** (`ALTER DATABASE ENABLE BLOCK CHANGE TRACKING`) évite à RMAN de lire toute la base pour trouver les blocs modifiés.
+
+## La règle 3-2-1
+**3** copies des données, sur **2** supports différents, dont **1** hors du site. Une sauvegarde sur le même disque que la base disparaît avec lui ; une sauvegarde dans la même salle disparaît avec un incendie.
+> Une sauvegarde qui n'a jamais été restaurée n'est qu'un espoir. Testez régulièrement une restauration complète sur un autre serveur, et chronométrez-la : c'est votre vrai RTO.
+
+=== EXERCICES
+?? Affichez la date de début, le type et le statut de toutes les sauvegardes, de la plus récente à la plus ancienne.
+>> SELECT start_time, input_type, status FROM v$rman_backup_job_details ORDER BY start_time DESC
+
+?? Affichez la date de début et le statut des sauvegardes qui ne se sont pas terminées par COMPLETED.
+>> SELECT start_time, status FROM v$rman_backup_job_details WHERE status <> 'COMPLETED'
+
+?? Affichez la date de fin de la dernière sauvegarde de la base (DB INCR) réussie.
+>> SELECT MAX(end_time) FROM v$rman_backup_job_details WHERE input_type = 'DB INCR' AND status = 'COMPLETED'
+
+=== QUIZ
+? Que mesure le RPO ?
++ La quantité de données qu'on accepte de perdre
+- Le temps de restauration
+- La taille des sauvegardes
+- Le nombre de sauvegardes par jour
+= Le RTO, lui, mesure la durée d'interruption acceptable.
+
+? Pourquoi un export Data Pump ne suffit-il pas comme sauvegarde ?
+- Il est trop gros
++ Il ne permet de revenir qu'à l'instant de l'export
+- Il ne contient pas les index
+- Il est illisible
+= Avec RMAN et les archives, on restaure jusqu'à la dernière transaction.
+
+? Quelle condition faut-il pour sauvegarder une base ouverte avec RMAN ?
+- La base doit être en MOUNT
++ La base doit être en mode ARCHIVELOG
+- Personne ne doit être connecté
+- Le block change tracking doit être activé
+= Les archives rendent cohérents les fichiers copiés à chaud.
+
+? Que sauvegarde une incrémentale de niveau 1 différentielle ?
+- Toute la base
++ Les blocs modifiés depuis la dernière sauvegarde de niveau 0 ou 1
+- Les blocs modifiés depuis le dernier niveau 0 uniquement
+- Les archives seulement
+= La cumulative, elle, repart toujours du dernier niveau 0.
+
+? Que dit la règle 3-2-1 ?
+- 3 sauvegardes par jour, 2 par nuit, 1 par semaine
++ 3 copies, sur 2 supports différents, dont 1 hors du site
+- 3 DBA, 2 serveurs, 1 base
+- 3 niveaux d'incrémentale
+= Une sauvegarde ne protège que si elle survit à ce qui détruit la base.

@@ -1,0 +1,111 @@
+# Créer des tables et des contraintes
+@duree 10
+@resume CREATE TABLE, les cinq contraintes, DEFAULT, ALTER TABLE et DROP TABLE.
+
+## CREATE TABLE
+On crée une table en donnant le nom et le type de chaque colonne :
+```sql
+CREATE TABLE services (
+  id_service  NUMBER(4)          CONSTRAINT pk_services PRIMARY KEY,
+  nom         VARCHAR2(50 CHAR)  NOT NULL,
+  ville       VARCHAR2(50 CHAR)
+);
+```
+`CREATE`, `ALTER` et `DROP` font partie du **DDL** (Data Definition Language) : ils décrivent la structure, pas les données.
+
+## Les cinq contraintes
+Les contraintes sont des règles qu'Oracle fait respecter **à chaque modification**, quelle que soit l'application qui écrit :
+- `NOT NULL` : la colonne doit avoir une valeur ;
+- `PRIMARY KEY` : identifiant unique et non NULL de chaque ligne ;
+- `UNIQUE` : pas deux fois la même valeur (mais NULL reste permis) ;
+- `FOREIGN KEY … REFERENCES` : la valeur doit exister dans une autre table ;
+- `CHECK` : une condition à respecter.
+```sql
+CREATE TABLE employes (
+  id_employe    NUMBER(6)          CONSTRAINT pk_employes PRIMARY KEY,
+  nom           VARCHAR2(50 CHAR)  NOT NULL,
+  prenom        VARCHAR2(50 CHAR),
+  email         VARCHAR2(100)      CONSTRAINT uq_emp_email UNIQUE,
+  salaire       NUMBER(10)         CONSTRAINT ck_emp_salaire CHECK (salaire > 0),
+  prime         NUMBER(10),
+  date_embauche DATE               DEFAULT SYSDATE NOT NULL,
+  id_service    NUMBER(4)          CONSTRAINT fk_emp_service
+                                   REFERENCES services (id_service),
+  id_manager    NUMBER(6)          CONSTRAINT fk_emp_manager
+                                   REFERENCES employes (id_employe)
+);
+```
+> Nommez toujours vos contraintes (`pk_`, `fk_`, `uq_`, `ck_`). Sinon Oracle les appelle `SYS_C0012345`, et le message d'erreur ne dira rien à personne.
+
+## La valeur par défaut
+`DEFAULT SYSDATE` remplit la colonne avec la date du jour si l'`INSERT` ne donne pas de valeur.
+
+## Modifier une table : ALTER TABLE
+```sql
+ALTER TABLE employes ADD (telephone VARCHAR2(20));
+ALTER TABLE employes MODIFY (prenom VARCHAR2(80 CHAR));
+ALTER TABLE employes DROP COLUMN telephone;
+```
+
+## Supprimer une table : DROP TABLE
+```sql
+DROP TABLE employes;
+```
+Par défaut, la table part dans la **corbeille** (recycle bin) et peut être récupérée avec `FLASHBACK TABLE employes TO BEFORE DROP;`. Avec `DROP TABLE employes PURGE;`, elle est supprimée définitivement.
+! Une instruction DDL valide automatiquement (COMMIT) tout le travail en cours de votre session. Nous y reviendrons dans la leçon sur les transactions.
+
+=== QUIZ
+? Quelle contrainte empêche deux employés d'avoir le même email ?
+- `NOT NULL`
+- `CHECK`
++ `UNIQUE`
+- `FOREIGN KEY`
+= `UNIQUE` interdit les doublons. Contrairement à la clé primaire, elle accepte les NULL.
+
+? Quelle est la différence entre PRIMARY KEY et UNIQUE ?
+- Il n'y en a aucune
++ La clé primaire interdit aussi NULL, et il n'y en a qu'une par table
+- UNIQUE est plus rapide
+- La clé primaire peut contenir des doublons
+= Une table a au plus une clé primaire, toujours unique et non NULL. Elle peut avoir plusieurs contraintes `UNIQUE`.
+
+? À quoi sert `CHECK (salaire > 0)` ?
+- À vérifier que la colonne est remplie
++ À refuser toute ligne dont le salaire n'est pas strictement positif
+- À calculer le salaire automatiquement
+- À relier la table à SERVICES
+= Oracle refuse l'INSERT ou l'UPDATE qui violerait la condition.
+
+? Pourquoi nommer explicitement ses contraintes ?
+- C'est obligatoire depuis la 19c
++ Pour que les messages d'erreur et la maintenance soient compréhensibles
+- Pour que la table soit plus rapide
+- Pour pouvoir les utiliser dans un SELECT
+= Une erreur sur `FK_EMP_SERVICE` se comprend tout de suite, une erreur sur `SYS_C0012345` beaucoup moins.
+
+? Après `DROP TABLE employes;` (sans PURGE), peut-on récupérer la table ?
++ Oui, avec `FLASHBACK TABLE employes TO BEFORE DROP;`, si la corbeille est activée
+- Non, jamais
+- Oui, avec `ROLLBACK;`
+- Oui, avec `UNDROP TABLE employes;`
+= DROP est du DDL : `ROLLBACK` ne l'annule pas. Mais la table est dans la corbeille, sauf si on a utilisé `PURGE`.
+
+=== EXERCICES
+?? Créez la table `produits` avec, dans cet ordre : `id_produit` NUMBER(6) clé primaire, `libelle` VARCHAR2(80) obligatoire, `prix` NUMBER(10) strictement positif.
+>> CREATE TABLE produits (
+>>   id_produit NUMBER(6)    CONSTRAINT pk_produits PRIMARY KEY,
+>>   libelle    VARCHAR2(80) NOT NULL,
+>>   prix       NUMBER(10)   CONSTRAINT ck_produits_prix CHECK (prix > 0)
+>> );
+== INSERT INTO produits VALUES (1, 'Clé USB', 5000);
+== INSERT INTO produits VALUES (1, 'Doublon', 5000);
+== INSERT INTO produits (id_produit, prix) VALUES (2, 100);
+== INSERT INTO produits VALUES (3, 'Prix négatif', -5);
+== SELECT id_produit, libelle, prix FROM produits ORDER BY id_produit
+~ La correction essaie d'insérer un doublon, un libellé vide et un prix négatif : vos contraintes doivent les refuser.
+
+?? Ajoutez à la table `EMPLOYES` une colonne `telephone` de type VARCHAR2(20).
+>> ALTER TABLE employes ADD (telephone VARCHAR2(20))
+== UPDATE employes SET telephone = '699000000' WHERE id_employe = 1;
+== SELECT id_employe, telephone FROM employes ORDER BY id_employe
+~ `ALTER TABLE … ADD (colonne type)`.

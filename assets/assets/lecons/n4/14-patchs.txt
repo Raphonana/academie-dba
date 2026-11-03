@@ -1,0 +1,74 @@
+# Appliquer les correctifs
+@duree 8
+@resume Release Updates, OPatch, datapatch et patching hors place.
+
+## Les Release Updates
+Oracle publie des correctifs pour la 19c **tous les trimestres**, en janvier, avril, juillet et octobre :
+- les **Release Updates** (RU) regroupent les corrections de bugs et de sécurité. Le dernier chiffre de la version les numérote : `19.21` est la 21e RU de la 19c (octobre 2023) ;
+- les **Critical Patch Updates** (CPU) sont les correctifs de sécurité, publiés le même jour et inclus dans les RU ;
+- des **one-off patches** corrigent un bug précis, sur demande à Oracle Support.
+La 19c est la version **à support long terme** (Long Term Release) : c'est pour cela qu'elle est si répandue, et qu'il faut la maintenir à jour.
+```sql
+SELECT version_full FROM v$instance;          -- 19.21.0.0.0
+SELECT patch_id, action, status, description
+FROM   dba_registry_sqlpatch ORDER BY action_time;
+$ $ORACLE_HOME/OPatch/opatch lspatches
+```
+> PRODCM est en 19.21 alors que nous sommes fin 2026 : environ trois ans de correctifs de sécurité manquent. C'est un point à mettre en tête de liste.
+
+## Appliquer une RU, en place
+- **1.** Lire le **README** de la RU, en entier, et mettre à jour **OPatch** si nécessaire ;
+- **2.** faire une **sauvegarde** de la base et de l'ORACLE_HOME ;
+- **3.** arrêter les bases et le listener de cet ORACLE_HOME ;
+- **4.** `opatch apply` pour mettre à jour les binaires ;
+- **5.** redémarrer les bases, puis `datapatch -verbose` pour mettre à jour le **dictionnaire** de chaque base ;
+- **6.** vérifier `DBA_REGISTRY_SQLPATCH` et les objets invalides (`utlrp.sql`).
+! Oublier **datapatch** est une erreur fréquente : les binaires sont à jour, mais pas le dictionnaire. `OPatch` dit que le correctif est appliqué alors qu'il ne l'est qu'à moitié.
+
+## Patcher hors place
+Plutôt que de modifier l'ORACLE_HOME en service, on installe un **nouvel ORACLE_HOME** déjà corrigé à côté de l'ancien. Le jour J, il suffit d'arrêter la base, de la redémarrer depuis le nouveau home et de lancer datapatch. L'interruption passe de plusieurs heures à quelques minutes, et le retour arrière est simple : l'ancien home est toujours là.
+> Avant la production, appliquez toujours la RU sur les environnements de test et de recette, et laissez tourner quelques jours.
+
+=== EXERCICES
+?? Affichez la version complète d'Oracle de PRODCM.
+>> SELECT version_full FROM v$instance
+
+?? Affichez le numéro de Release Update de PRODCM, c'est-à-dire le deuxième nombre de la version complète (21 dans 19.21.0.0.0), sous forme de nombre.
+>> SELECT TO_NUMBER(SUBSTR(version_full, 4, 2)) AS ru FROM v$instance
+~ `SUBSTR(version_full, 4, 2)` prend les caractères 4 et 5.
+
+=== QUIZ
+? À quel rythme Oracle publie-t-il les Release Updates de la 19c ?
+- Chaque mois
++ Chaque trimestre
+- Chaque année
+- Quand un client le demande
+= En janvier, avril, juillet et octobre.
+
+? Que signifie la version 19.21.0.0.0 ?
++ Oracle 19c avec la 21e Release Update
+- Oracle 19c installée le 21 du mois
+- Oracle 21c en mode de compatibilité 19
+- La 19e mise à jour de la 21c
+= Le deuxième nombre est le numéro de RU.
+
+? Que fait datapatch ?
+- Il met à jour les binaires
++ Il applique la partie SQL du correctif au dictionnaire de chaque base
+- Il sauvegarde la base
+- Il télécharge les correctifs
+= opatch met à jour les binaires ; datapatch met à jour chaque base.
+
+? Quel est l'avantage du patching hors place ?
+- Il est gratuit
++ L'interruption est courte et le retour arrière est simple
+- Il ne demande pas de sauvegarde
+- Il évite datapatch
+= Le nouvel ORACLE_HOME est préparé à l'avance, l'ancien reste disponible.
+
+? Quelle vue confirme qu'un correctif a bien été appliqué au dictionnaire ?
+- V$VERSION
++ DBA_REGISTRY_SQLPATCH
+- DBA_OBJECTS
+- V$PARAMETER
+= Elle trace chaque exécution de datapatch, avec son statut.

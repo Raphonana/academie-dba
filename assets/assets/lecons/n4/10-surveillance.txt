@@ -1,0 +1,78 @@
+# La surveillance quotidienne
+@duree 8
+@resume La tournée du matin : ce qu'un DBA vérifie chaque jour, et comment l'automatiser.
+
+## La tournée du matin
+Chaque matin, avant que les utilisateurs ne s'en aperçoivent, un DBA vérifie :
+- **les instances** : toutes ouvertes ? Redémarrées cette nuit sans qu'on le sache (`STARTUP_TIME`) ?
+- **l'alert log** : nouvelles erreurs ORA- depuis hier ?
+- **les sauvegardes** : celles de la nuit sont-elles toutes COMPLETED ?
+- **l'espace** : tablespaces au-delà de 85 %, FRA, systèmes de fichiers du serveur ;
+- **les sessions** : sessions bloquées, sessions anormalement longues ;
+- **les objets invalides** : apparus après une livraison ?
+- **les travaux planifiés** : échecs dans `DBA_SCHEDULER_JOB_RUN_DETAILS` ;
+- **les comptes** : comptes verrouillés ou mots de passe qui expirent bientôt.
+
+## Lire l'alert log efficacement
+```sql
+$ adrci
+adrci> show alert -tail 100
+adrci> show alert -p "message_text like '%ORA-%'"
+```
+Ou en SQL, la vue `V$DIAG_ALERT_EXT` (et `X$DBGALERTEXT`) permet de chercher dans l'alert log avec une requête.
+
+## Automatiser
+Une tournée faite à la main finit par être oubliée un jour chargé. On l'automatise :
+- **Enterprise Manager Cloud Control** : l'outil d'Oracle, avec seuils, alertes par courriel et historique ;
+- des **scripts** planifiés (cron, DBMS_SCHEDULER) qui lancent les requêtes de ce niveau et envoient un rapport ;
+- des outils de supervision du marché, ou un tableau de bord maison.
+> Un bon rapport du matin tient en un écran : vert quand tout va bien, et seulement les anomalies sinon. Un rapport de vingt pages que personne ne lit ne protège de rien.
+
+=== EXERCICES
+?? Affichez le nombre de sessions qui attendent un verrou tenu par une autre session (colonne `blocking_session` renseignée).
+>> SELECT COUNT(*) FROM v$session WHERE blocking_session IS NOT NULL
+
+?? Affichez le nombre d'objets invalides par propriétaire.
+>> SELECT owner, COUNT(*) FROM dba_objects WHERE status = 'INVALID' GROUP BY owner
+
+?? Affichez la date et le type des sauvegardes de la nuit du 28 octobre 2026 (démarrées ce jour-là) qui ont échoué.
+>> SELECT start_time, input_type FROM v$rman_backup_job_details WHERE status = 'FAILED' AND start_time >= DATE '2026-10-28'
+
+?? Affichez le nom et l'état des comptes non OPEN dont le profil n'est pas DEFAULT : ce sont des personnes ou des applications à prévenir.
+>> SELECT username, account_status FROM dba_users WHERE account_status <> 'OPEN' AND profile <> 'DEFAULT'
+
+=== QUIZ
+? Pourquoi vérifier STARTUP_TIME dans V$INSTANCE chaque matin ?
++ Pour découvrir un redémarrage de la nuit dont personne n'a parlé
+- Pour connaître la version
+- Pour savoir combien de sessions sont connectées
+- Pour lire l'alert log
+= Un redémarrage imprévu cache souvent une panne, un plantage ou une intervention non annoncée.
+
+? Quel outil en ligne de commande permet de lire l'alert log et les traces de l'ADR ?
+- lsnrctl
++ adrci
+- rman
+- tkprof
+= `show alert -tail 100` affiche les 100 dernières lignes.
+
+? À partir de quel taux de remplissage Oracle émet-il par défaut une alerte sur un tablespace ?
+- 50 %
+- 70 %
++ 85 %
+- 99 %
+= Et une alerte critique à 97 %.
+
+? Quel est le défaut principal d'une surveillance faite uniquement à la main ?
+- Elle est plus précise
++ Elle finit par être oubliée un jour de forte charge
+- Elle est interdite par Oracle
+- Elle bloque les sessions
+= C'est justement les jours chargés que les problèmes arrivent.
+
+? Qu'est-ce qu'un bon rapport du matin ?
+- Un rapport exhaustif de vingt pages
++ Un écran qui montre seulement les anomalies, et du vert quand tout va bien
+- Un export complet de l'alert log
+- Un rapport envoyé une fois par mois
+= On doit pouvoir le lire en une minute, et voir tout de suite ce qui demande une action.

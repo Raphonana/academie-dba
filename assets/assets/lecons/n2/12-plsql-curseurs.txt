@@ -1,0 +1,101 @@
+# Les curseurs
+@duree 9
+@resume Parcourir le résultat d'une requête ligne par ligne, et les attributs SQL%.
+
+## Qu'est-ce qu'un curseur ?
+Un **curseur** est une zone de travail où Oracle garde le résultat d'une requête et la position de lecture. Chaque instruction SQL en utilise un. Pour lire plusieurs lignes en PL/SQL, on ne peut pas faire de `SELECT INTO` : il faut un curseur.
+
+## La boucle FOR sur curseur
+C'est la forme la plus simple, et celle à privilégier : Oracle ouvre, lit et ferme le curseur tout seul.
+```sql
+BEGIN
+  FOR r IN (SELECT nom, salaire FROM employes ORDER BY salaire DESC) LOOP
+    DBMS_OUTPUT.PUT_LINE(r.nom || ' : ' || r.salaire);
+  END LOOP;
+END;
+```
+`r` est déclaré automatiquement, avec un champ par colonne.
+
+## Le curseur explicite
+On peut aussi déclarer le curseur, éventuellement avec des paramètres, puis le piloter soi-même :
+```sql
+DECLARE
+  CURSOR c_emp (p_service NUMBER) IS
+    SELECT nom, salaire FROM employes WHERE id_service = p_service;
+  r c_emp%ROWTYPE;
+BEGIN
+  OPEN c_emp(20);
+  LOOP
+    FETCH c_emp INTO r;
+    EXIT WHEN c_emp%NOTFOUND;
+    DBMS_OUTPUT.PUT_LINE(r.nom);
+  END LOOP;
+  DBMS_OUTPUT.PUT_LINE(c_emp%ROWCOUNT || ' lignes lues');
+  CLOSE c_emp;
+END;
+```
+Les attributs d'un curseur : `%FOUND`, `%NOTFOUND`, `%ROWCOUNT` (nombre de lignes lues jusqu'ici), `%ISOPEN`.
+! Placez `EXIT WHEN c%NOTFOUND` **juste après** le FETCH. Placé après le traitement, il fait traiter deux fois la dernière ligne. Et un curseur ouvert jamais fermé finit par provoquer **ORA-01000: maximum open cursors exceeded**.
+
+## Les attributs SQL%
+Après un `INSERT`, `UPDATE` ou `DELETE`, le curseur implicite s'appelle `SQL` :
+```sql
+UPDATE employes SET salaire = salaire * 1.05 WHERE id_service = 20;
+DBMS_OUTPUT.PUT_LINE(SQL%ROWCOUNT || ' salaires augmentés');
+IF SQL%ROWCOUNT = 0 THEN
+  RAISE_APPLICATION_ERROR(-20002, 'Aucun employé dans ce service');
+END IF;
+```
+> Un `UPDATE` qui ne trouve aucune ligne ne lève pas d'erreur. `SQL%ROWCOUNT` est le seul moyen de le savoir.
+
+## Ligne par ligne… ou pas
+Une boucle qui fait un `UPDATE` par ligne est souvent beaucoup plus lente qu'un seul `UPDATE` sur tout l'ensemble. Règle d'or des développeurs Oracle : **si c'est faisable en une instruction SQL, faites-le en SQL**. Le PL/SQL sert à ce que le SQL ne sait pas faire.
+
+=== QUIZ
+? Pourquoi faut-il un curseur pour lire plusieurs lignes en PL/SQL ?
+- Parce que SELECT est interdit en PL/SQL
++ Parce que SELECT INTO n'accepte qu'une seule ligne
+- Parce que les curseurs sont plus rapides
+- Parce qu'il faut un COMMIT entre chaque ligne
+= SELECT INTO lève TOO_MANY_ROWS au-delà d'une ligne. Le curseur permet de les parcourir une à une.
+
+? Quel avantage a la boucle `FOR r IN (SELECT …) LOOP` ?
++ Oracle ouvre, lit et ferme le curseur automatiquement
+- Elle verrouille les lignes lues
+- Elle ne lit que la première ligne
+- Elle trie les lignes
+= Pas d'OPEN, de FETCH, d'EXIT ni de CLOSE à écrire, donc pas d'oubli possible.
+
+? Combien de fois la dernière ligne est-elle affichée ?
+| OPEN c_emp(20);
+| LOOP
+|   FETCH c_emp INTO r;
+|   DBMS_OUTPUT.PUT_LINE(r.nom);
+|   EXIT WHEN c_emp%NOTFOUND;
+| END LOOP;
+- Une fois
++ Deux fois
+- Jamais
+- Indéfiniment
+= Le dernier FETCH échoue mais r garde sa valeur précédente, qui est affichée avant le test. EXIT WHEN doit suivre immédiatement le FETCH.
+
+? Que vaut SQL%ROWCOUNT après un UPDATE qui ne trouve aucune ligne ?
++ 0
+- NULL
+- -1
+- Il lève NO_DATA_FOUND
+= Un UPDATE sans ligne concernée n'est pas une erreur. Seul SQL%ROWCOUNT permet de le détecter.
+
+? Une application ouvre des curseurs sans jamais les fermer. Quelle erreur finit par apparaître ?
+- ORA-01403
++ ORA-01000: maximum open cursors exceeded
+- ORA-04031
+- ORA-00060
+= Le nombre de curseurs ouverts par session est limité par le paramètre OPEN_CURSORS.
+
+? Faut-il mettre à jour 100 000 lignes avec une boucle qui fait un UPDATE par ligne ?
+- Oui, c'est plus sûr
++ Non, un seul UPDATE ensembliste est en général bien plus rapide
+- Oui, sinon Oracle verrouille la table
+- Non, c'est interdit
+= Chaque instruction a un coût d'aller-retour entre PL/SQL et SQL. Le SQL ensembliste évite ces milliers de changements de contexte.

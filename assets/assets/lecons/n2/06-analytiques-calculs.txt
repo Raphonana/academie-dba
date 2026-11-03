@@ -1,0 +1,96 @@
+# Fonctions analytiques : cumuls et comparaisons
+@duree 9
+@resume SUM et AVG OVER, totaux cumulés, LAG, LEAD et LISTAGG.
+
+## Le total à côté du détail
+Les agrégats classiques (`SUM`, `AVG`, `COUNT`, `MIN`, `MAX`) deviennent analytiques avec `OVER` :
+```sql
+SELECT nom, id_service, salaire,
+       SUM(salaire) OVER (PARTITION BY id_service) AS masse_service,
+       ROUND(100 * salaire / SUM(salaire) OVER (PARTITION BY id_service)) AS pct
+FROM   employes;
+```
+NGO voit 1 550 000 en masse de service et 58 % ; FOTSO voit la même masse et 42 %. Sans fonction analytique, il faudrait une sous-requête ou une jointure sur un `GROUP BY`.
+`OVER ()` avec des parenthèses vides prend **toutes** les lignes : `SUM(salaire) OVER ()` donne la masse totale sur chaque ligne.
+
+## Le cumul
+Avec `ORDER BY` dans le `OVER`, la fenêtre va du début jusqu'à la ligne en cours : on obtient un **total cumulé**.
+```sql
+SELECT nom, date_embauche, salaire,
+       SUM(salaire) OVER (ORDER BY date_embauche) AS masse_cumulee
+FROM   employes;
+-- MBARGA 1 500 000, NGO 2 400 000, ATANGA 3 120 000, FOTSO 3 770 000, BELLO 4 250 000
+```
+On peut préciser la fenêtre : `ROWS BETWEEN 2 PRECEDING AND CURRENT ROW` fait une moyenne mobile sur trois lignes.
+! Avec `ORDER BY`, la fenêtre par défaut est `RANGE … CURRENT ROW` : les lignes ex aequo sur la clé de tri sont additionnées ensemble. Si vous voulez un cumul strictement ligne par ligne, écrivez `ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`.
+
+## LAG et LEAD : la ligne d'avant, la ligne d'après
+`LAG(colonne)` lit la valeur de la ligne précédente, `LEAD(colonne)` celle de la ligne suivante, dans l'ordre du `OVER` :
+```sql
+SELECT nom, date_embauche,
+       LAG(nom)  OVER (ORDER BY date_embauche) AS embauche_avant,
+       date_embauche - LAG(date_embauche) OVER (ORDER BY date_embauche) AS jours_ecart
+FROM   employes;
+```
+La première ligne n'a pas de précédente : `LAG` renvoie NULL. `LAG(nom, 1, '-')` donne une valeur par défaut. C'est l'outil idéal pour comparer un mois au mois précédent.
+
+## LISTAGG : une liste en une ligne
+`LISTAGG` est un agrégat (avec `GROUP BY`) qui concatène les valeurs d'un groupe :
+```sql
+SELECT id_service,
+       LISTAGG(nom, ', ') WITHIN GROUP (ORDER BY nom) AS equipe
+FROM   employes
+GROUP  BY id_service;
+-- 20 | FOTSO, NGO
+```
+> En 19c, si la liste dépasse la taille maximale d'un VARCHAR2, Oracle lève ORA-01489. Ajoutez `ON OVERFLOW TRUNCATE` pour couper la liste proprement.
+
+=== EXERCICES
+?? Affichez le nom, le numéro de service et la masse salariale du service de chaque employé.
+>> SELECT nom, id_service, SUM(salaire) OVER (PARTITION BY id_service) AS masse FROM employes
+
+?? Affichez le nom et la masse salariale cumulée, dans l'ordre des dates d'embauche (du plus ancien au plus récent).
+>> SELECT nom, SUM(salaire) OVER (ORDER BY date_embauche) AS cumul FROM employes ORDER BY date_embauche
+~ `SUM(salaire) OVER (ORDER BY date_embauche)`, et triez le résultat de la même façon.
+
+?? Affichez le nom de chaque employé et le nom de l'employé embauché juste avant lui.
+>> SELECT nom, LAG(nom) OVER (ORDER BY date_embauche) AS precedent FROM employes
+
+?? Pour chaque service, affichez son numéro et la liste des noms de ses employés, triés et séparés par une virgule et un espace.
+>> SELECT id_service, LISTAGG(nom, ', ') WITHIN GROUP (ORDER BY nom) AS equipe FROM employes GROUP BY id_service
+
+=== QUIZ
+? Quelle différence entre `SUM(salaire)` avec GROUP BY et `SUM(salaire) OVER (PARTITION BY …)` ?
+- Aucune
++ La version analytique garde toutes les lignes et affiche la somme sur chacune
+- La version analytique est interdite avec WHERE
+- GROUP BY est plus précis
+= GROUP BY fusionne les lignes, OVER les garde.
+
+? Que calcule `SUM(salaire) OVER (ORDER BY date_embauche)` ?
+- La somme totale sur chaque ligne
++ Un total cumulé dans l'ordre des embauches
+- La somme par date
+- La différence avec la ligne précédente
+= Avec un ORDER BY, la fenêtre va du début jusqu'à la ligne en cours.
+
+? Que renvoie LAG(nom) OVER (ORDER BY date_embauche) pour le premier embauché ?
+- Son propre nom
+- Le dernier embauché
++ NULL
+- Une erreur
+= Il n'y a pas de ligne précédente. Le troisième argument de LAG permet de fixer une valeur par défaut.
+
+? Que vaut `SUM(salaire) OVER ()` ?
++ La masse salariale totale, répétée sur chaque ligne
+- Zéro
+- Le salaire de la ligne
+- Une erreur de syntaxe
+= Des parenthèses vides : la fenêtre contient toutes les lignes du résultat.
+
+? À quoi sert LISTAGG ?
+- À lister les tables d'un schéma
++ À concaténer les valeurs d'un groupe en une seule chaîne
+- À trier une liste
+- À compter les doublons
+= `LISTAGG(nom, ', ') WITHIN GROUP (ORDER BY nom)` donne par exemple « FOTSO, NGO ».

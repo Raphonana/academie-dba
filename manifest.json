@@ -1,0 +1,36 @@
+{
+    "name": "Académie DBA",
+    "short_name": "Académie DBA",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#01060F",
+    "theme_color": "#071022",
+    "description": "Cours Oracle Database 19c en français, du premier SELECT au DBA senior.",
+    "lang": "fr",
+    "orientation": "any",
+    "prefer_related_applications": false,
+    "icons": [
+        {
+            "src": "icons/Icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-maskable-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "maskable"
+        },
+        {
+            "src": "icons/Icon-maskable-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ]
+}

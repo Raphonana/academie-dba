@@ -1,0 +1,105 @@
+# Fonctions sur le texte et les nombres
+@duree 8
+@resume UPPER, SUBSTR, INSTR, REPLACE, TRIM, ROUND, TRUNC, MOD et CASE.
+
+## Une fonction par ligne
+Une fonction prend une ou plusieurs valeurs et en renvoie une nouvelle, pour chaque ligne. On peut l'utiliser dans le `SELECT`, le `WHERE` ou le `ORDER BY`.
+
+## Le texte
+- `UPPER('Douala')` donne `DOUALA`, `LOWER` met en minuscules, `INITCAP('jean fotso')` donne `Jean Fotso` ;
+- `LENGTH('Garoua')` donne 6 ;
+- `SUBSTR('INFORMATIQUE', 1, 4)` donne `INFO` : à partir du 1er caractère, 4 caractères ;
+- `INSTR('a.b@exemple.cm', '@')` donne 4 : la position du `@` ;
+- `REPLACE('2024-01-15', '-', '/')` donne `2024/01/15` ;
+- `TRIM('  Paul  ')` enlève les espaces au début et à la fin ;
+- `LPAD('42', 5, '0')` donne `00042`.
+
+## Comparer sans tenir compte des majuscules
+La leçon sur `WHERE` a montré que `'Bello'` ne trouve pas `'BELLO'`. La solution : mettre les deux côtés en majuscules.
+```sql
+SELECT nom FROM employes
+WHERE  UPPER(nom) = UPPER('Bello');
+```
+> Mettre une fonction sur une colonne empêche en général Oracle d'utiliser un index sur cette colonne. Nous verrons au niveau Performance comment créer un index adapté.
+
+## Les nombres
+- `ROUND(1234.567, 2)` donne 1234,57 ; `ROUND(1234.567, -2)` donne 1200 ;
+- `TRUNC(1234.567, 1)` donne 1234,5 : on coupe sans arrondir ;
+- `MOD(17, 5)` donne 2 : le reste de la division ;
+- `ABS(-8)` donne 8, `CEIL(4.1)` donne 5, `FLOOR(4.9)` donne 4.
+```sql
+SELECT nom, ROUND(salaire / 655.957, 2) AS salaire_euros
+FROM   employes;
+```
+
+## Des conditions dans le SELECT : CASE
+`CASE` choisit une valeur selon des conditions, testées dans l'ordre :
+```sql
+SELECT nom,
+       CASE
+         WHEN salaire >= 1000000 THEN 'Cadre supérieur'
+         WHEN salaire >=  700000 THEN 'Cadre'
+         ELSE 'Employé'
+       END AS categorie
+FROM   employes;
+```
+Sans `ELSE`, une ligne qui ne vérifie aucune condition reçoit NULL.
+
+=== QUIZ
+? Que renvoie `SUBSTR('YAOUNDE', 1, 3)` ?
++ `YAO`
+- `AOU`
+- `YAOU`
+- `NDE`
+= On part du 1er caractère et on en prend 3.
+
+? Comment trouver 'BELLO' quelle que soit la façon dont l'utilisateur a tapé le nom ?
+- `WHERE nom = 'bello' IGNORE CASE`
++ `WHERE UPPER(nom) = UPPER(:saisie)`
+- `WHERE nom LIKE 'bello'`
+- `WHERE LENGTH(nom) = 5`
+= On met les deux côtés en majuscules avant de comparer. (`:saisie` représente la valeur tapée par l'utilisateur.)
+
+? Que vaut `ROUND(1456.78, -2)` ?
+- 1456,78
+- 1456
++ 1500
+- 1400
+= Avec -2, on arrondit à la centaine : 1456,78 devient 1500.
+
+? Quelle fonction renvoie le reste d'une division ?
+- `REST`
++ `MOD`
+- `DIV`
+- `TRUNC`
+= `MOD(17, 5)` vaut 2, car 17 = 3 × 5 + 2.
+
+? Avec le CASE de la leçon, quelle catégorie reçoit Marie ATANGA (720 000) ?
+- Cadre supérieur
++ Cadre
+- Employé
+- NULL
+= 720 000 n'atteint pas 1 000 000 mais dépasse 700 000 : c'est la deuxième condition qui s'applique.
+
+=== EXERCICES
+?? Affichez le prénom en majuscules et le nom avec seulement l'initiale en majuscule (`Mbarga`) de chaque employé.
+>> SELECT UPPER(prenom), INITCAP(nom) FROM employes
+~ `UPPER` et `INITCAP`.
+
+?? Affichez le nom de chaque service et ses 3 premières lettres.
+>> SELECT nom, SUBSTR(nom, 1, 3) AS abrev FROM services
+~ `SUBSTR(texte, position, longueur)`.
+
+?? Affichez le nom et le salaire en euros (1 € = 655,957 FCFA), arrondi à l'euro près.
+>> SELECT nom, ROUND(salaire / 655.957) AS euros FROM employes
+~ `ROUND(valeur)` arrondit à l'unité.
+
+?? Affichez le nom et la catégorie de chaque employé : « Cadre supérieur » à partir de 1 000 000, « Cadre » à partir de 700 000, « Employé » sinon.
+>> SELECT nom,
+>>        CASE
+>>          WHEN salaire >= 1000000 THEN 'Cadre supérieur'
+>>          WHEN salaire >= 700000 THEN 'Cadre'
+>>          ELSE 'Employé'
+>>        END AS categorie
+>> FROM employes
+~ `CASE WHEN … THEN … ELSE … END` : les conditions sont testées dans l'ordre.

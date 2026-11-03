@@ -1,0 +1,66 @@
+# Real Application Clusters
+@duree 9
+@resume Plusieurs instances, une seule base : clusterware, interconnexion, cache fusion, SCAN et services.
+
+## Le principe
+Avec **RAC**, plusieurs serveurs (les **nœuds**) font tourner chacun une instance, et toutes ces instances ouvrent **la même base**, posée sur un stockage partagé. Si un nœud tombe, les autres continuent : les sessions qui y étaient se reconnectent ailleurs, et le service continue.
+
+## Les composants
+- **Grid Infrastructure** (le clusterware) : surveille les nœuds, démarre et arrête les ressources (instances, listeners, services). Il s'appuie sur des **voting disks** (qui vote pour savoir quel nœud reste dans le cluster) et l'**OCR** (la configuration du cluster) ;
+- le **stockage partagé**, en général géré par **ASM** ;
+- l'**interconnexion** : un réseau privé et rapide entre les nœuds ;
+- le **SCAN** (Single Client Access Name) : un nom unique, associé à trois adresses, que les clients utilisent pour se connecter au cluster quel que soit le nombre de nœuds.
+
+## Cache Fusion
+Chaque instance a son propre buffer cache. Quand une instance a besoin d'un bloc qui est dans le cache d'une autre, il lui est envoyé **directement par l'interconnexion**, sans repasser par le disque. C'est le **Cache Fusion**. Une interconnexion lente ou saturée se voit aux événements `gc cr request`, `gc buffer busy`… et ralentit tout le cluster.
+
+## Les services
+On n'expose pas les instances aux applications, mais des **services** : par exemple `CAISSE` qui tourne sur les nœuds 1 et 2, et `RAPPORTS` qui tourne sur le nœud 3, avec un nœud de repli. En cas de panne, le clusterware déplace le service.
+```sql
+$ srvctl status database -d PRODCM
+$ srvctl add service -d PRODCM -s CAISSE -preferred PRODCM1,PRODCM2 -available PRODCM3
+$ crsctl stat res -t
+```
+
+## Avant de choisir RAC
+- RAC est une **option payante** de l'Enterprise Edition. Depuis la 19c, il n'est plus disponible en Standard Edition 2 ;
+- il protège contre la panne d'un **serveur**, pas d'un site ni d'une erreur humaine ;
+- une application qui modifie sans cesse les mêmes blocs depuis tous les nœuds peut aller **moins vite** en RAC qu'en instance unique ;
+- il demande des compétences pointues (clusterware, réseau, ASM).
+> **RAC One Node** fait tourner une seule instance à la fois, mais peut la déplacer sur un autre nœud en cas de panne ou de maintenance : un compromis moins coûteux.
+
+=== QUIZ
+? Combien de bases de données y a-t-il dans un RAC de trois nœuds ?
+- Trois
++ Une seule, ouverte par trois instances
+- Deux, plus une de secours
+- Autant que de services
+= Toutes les instances partagent les mêmes fichiers.
+
+? Qu'est-ce que le Cache Fusion ?
++ L'envoi direct d'un bloc d'un cache d'instance à un autre, par l'interconnexion
+- La fusion des caches de deux bases différentes
+- Un type de sauvegarde
+- La compression du buffer cache
+= Il évite de repasser par le disque pour partager un bloc.
+
+? À quoi sert le SCAN ?
+- À scanner les disques
++ À offrir aux clients un nom de connexion unique pour tout le cluster
+- À surveiller les nœuds
+- À sauvegarder l'OCR
+= Les clients n'ont pas besoin de connaître la liste des nœuds.
+
+? Un RAC protège-t-il contre un incendie dans la salle serveurs ?
+- Oui
++ Non : les nœuds et le stockage sont au même endroit
+- Oui, si on a quatre nœuds
+- Seulement avec ASM
+= Contre la perte d'un site, il faut Data Guard.
+
+? Pourquoi exposer des services plutôt que des instances aux applications ?
+- C'est plus joli
++ Le clusterware peut déplacer un service sur un autre nœud en cas de panne ou de maintenance
+- Les instances n'acceptent pas de connexions
+- Pour économiser des licences
+= L'application se connecte au service, où qu'il tourne.

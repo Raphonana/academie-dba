@@ -1,0 +1,90 @@
+# La clause WITH
+@duree 7
+@resume Nommer des sous-requêtes pour écrire des requêtes lisibles, étape par étape.
+
+## Donner un nom à une sous-requête
+Les vues en ligne s'imbriquent vite et deviennent illisibles. La clause `WITH` (on parle de **CTE**, Common Table Expression, ou de *subquery factoring*) permet de nommer une sous-requête **avant** la requête principale :
+```sql
+WITH masse AS (
+  SELECT id_service, SUM(salaire) AS total
+  FROM   employes
+  GROUP  BY id_service
+)
+SELECT s.nom, m.total
+FROM   services s
+JOIN   masse m ON m.id_service = s.id_service
+ORDER  BY m.total DESC;
+```
+La requête se lit de haut en bas, comme un raisonnement : « d'abord je calcule les masses, ensuite je les affiche avec le nom du service ».
+
+## Plusieurs étapes
+On peut enchaîner plusieurs sous-requêtes nommées, séparées par des virgules. Chacune peut utiliser les précédentes :
+```sql
+WITH masse AS (
+  SELECT id_service, SUM(salaire) AS total
+  FROM   employes GROUP BY id_service
+),
+moyenne AS (
+  SELECT AVG(total) AS valeur FROM masse
+)
+SELECT m.id_service, m.total
+FROM   masse m, moyenne
+WHERE  m.total > moyenne.valeur;   -- services 10 et 20
+```
+
+## Réutiliser sans répéter
+Un même nom peut être utilisé plusieurs fois dans la requête principale. Sans `WITH`, il faudrait recopier la sous-requête à chaque fois, avec le risque d'en modifier une et d'oublier l'autre.
+> Oracle choisit seul s'il exécute la sous-requête une fois et garde le résultat en mémoire temporaire, ou s'il la fusionne avec le reste. L'indication `/*+ MATERIALIZE */` force le premier comportement ; nous verrons les indications (hints) au niveau Performance.
+! La clause `WITH` n'existe que le temps de la requête. Pour réutiliser une sous-requête dans plusieurs requêtes, créez une **vue**.
+
+=== EXERCICES
+?? Avec `WITH`, calculez la masse salariale de chaque service, puis affichez le numéro et la masse des services dont la masse dépasse la moyenne des masses.
+>> WITH m AS (SELECT id_service, SUM(salaire) AS masse FROM employes GROUP BY id_service)
+>> SELECT id_service, masse FROM m WHERE masse > (SELECT AVG(masse) FROM m)
+~ La sous-requête `(SELECT AVG(masse) FROM m)` réutilise le nom défini par WITH.
+
+?? Avec `WITH`, affichez le nom de chaque service et son nombre d'employés.
+>> WITH nb AS (SELECT id_service, COUNT(*) AS n FROM employes GROUP BY id_service)
+>> SELECT s.nom, nb.n FROM services s JOIN nb ON nb.id_service = s.id_service
+
+?? Avec deux sous-requêtes nommées, affichez le nom et le salaire des employés de Douala qui gagnent plus de 700 000.
+>> WITH douala AS (SELECT id_service FROM services WHERE ville = 'Douala'),
+>> bien_payes AS (SELECT nom, salaire, id_service FROM employes WHERE salaire > 700000)
+>> SELECT b.nom, b.salaire FROM bien_payes b JOIN douala d ON d.id_service = b.id_service
+~ Une étape pour les services de Douala, une pour les salaires, puis une jointure.
+
+=== QUIZ
+? Que fait la clause WITH ?
+- Elle crée une table permanente
++ Elle nomme une sous-requête utilisable dans la requête qui suit
+- Elle crée une vue enregistrée dans le dictionnaire
+- Elle verrouille les tables
+= Le nom n'existe que pendant l'exécution de la requête.
+
+? Comment sépare-t-on plusieurs sous-requêtes dans un même WITH ?
+- Par des points-virgules
++ Par des virgules
+- Par le mot AND
+- On répète le mot WITH
+= `WITH a AS (…), b AS (…) SELECT …`
+
+? Une sous-requête nommée peut-elle utiliser une sous-requête nommée avant elle ?
++ Oui
+- Non, jamais
+- Seulement si elle est matérialisée
+- Seulement avec UNION
+= C'est ce qui permet de découper un calcul en étapes successives.
+
+? Quel avantage principal apporte WITH par rapport aux vues en ligne imbriquées ?
+- Il est toujours plus rapide
++ La requête est plus lisible et une sous-requête peut être réutilisée sans être recopiée
+- Il permet de modifier les données
+- Il évite les jointures
+= Le gain est d'abord en clarté. Côté performance, Oracle décide lui-même.
+
+? Vous voulez réutiliser la même sous-requête dans dix rapports différents. Que créez-vous ?
+- Un WITH dans chaque rapport
++ Une vue
+- Une séquence
+- Un index
+= Une vue est enregistrée dans la base et partagée par toutes les requêtes.

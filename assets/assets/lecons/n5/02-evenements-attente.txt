@@ -1,0 +1,82 @@
+# Les événements d'attente
+@duree 9
+@resume Lire ce qu'attend Oracle : lectures disque, COMMIT, verrous, latches.
+
+## Les classes d'attente
+Oracle connaît des centaines d'événements, regroupés en **classes** (colonne `WAIT_CLASS`) :
+- **User I/O** : lectures de données ;
+- **Commit** : attente de l'écriture du redo au COMMIT ;
+- **Application** : verrous posés par l'application ;
+- **Concurrency** : accès concurrents à des structures internes (latches, mutex, blocs très demandés) ;
+- **System I/O** : écritures des processus d'arrière-plan ;
+- **Idle** : la session ne fait rien, elle attend que le client lui envoie du travail. À **ignorer** dans une analyse.
+
+## Les événements à connaître
+- `db file sequential read` : lecture d'**un seul bloc**, typiquement par un index. Normal en grande quantité dans une application transactionnelle ;
+- `db file scattered read` : lecture de **plusieurs blocs** d'un coup, typiquement un **parcours complet** de table ou d'index. En masse sur une application transactionnelle, il cache souvent un index manquant ou inutilisable ;
+- `direct path read` : parcours complet qui lit les blocs directement en PGA, sans passer par le buffer cache ;
+- `log file sync` : une session attend que LGWR ait écrit son redo au COMMIT. Élevé quand on valide trop souvent, ou quand le disque des redo est lent ;
+- `enq: TX - row lock contention` : une session attend une ligne verrouillée par une autre ;
+- `latch: shared pool`, `library cache: mutex X` : contention dans la shared pool, souvent due aux requêtes sans variables de liaison ;
+- `buffer busy waits`, `read by other session` : plusieurs sessions veulent le même bloc au même moment.
+
+## Les vues
+```sql
+-- Maintenant
+SELECT event, COUNT(*) FROM v$session
+WHERE  wait_class <> 'Idle' GROUP BY event;
+
+-- Depuis le démarrage de l'instance
+SELECT event, total_waits, ROUND(time_waited_micro / 1e6) AS secondes
+FROM   v$system_event
+WHERE  wait_class <> 'Idle'
+ORDER  BY time_waited_micro DESC;
+```
+> Le temps moyen par attente est révélateur : une `db file sequential read` prend en général moins de 10 ms sur des disques classiques, et bien moins d'une milliseconde sur du stockage flash. 30 ms signale un stockage en difficulté.
+
+=== EXERCICES
+?? Affichez les 5 événements non inactifs (wait_class différent de 'Idle') qui ont coûté le plus de temps depuis le démarrage, avec leur temps total en secondes, arrondi.
+>> SELECT event, ROUND(time_waited_micro / 1000000) AS secondes FROM v$system_event WHERE wait_class <> 'Idle' ORDER BY time_waited_micro DESC FETCH FIRST 5 ROWS ONLY
+
+?? Affichez le temps moyen d'une attente `db file sequential read`, en millisecondes, arrondi à deux décimales.
+>> SELECT ROUND(time_waited_micro / total_waits / 1000, 2) AS ms FROM v$system_event WHERE event = 'db file sequential read'
+~ Temps total divisé par le nombre d'attentes, puis converti de microsecondes en millisecondes.
+
+?? Affichez le temps total d'attente par classe d'attente, en secondes arrondies, hors classe Idle.
+>> SELECT wait_class, ROUND(SUM(time_waited_micro) / 1000000) AS secondes FROM v$system_event WHERE wait_class <> 'Idle' GROUP BY wait_class
+
+=== QUIZ
+? Quelle classe d'attente faut-il ignorer dans une analyse de performance ?
+- User I/O
+- Commit
++ Idle
+- Concurrency
+= Une session Idle attend simplement que le client lui demande quelque chose.
+
+? Que signifie `db file sequential read` ?
++ La lecture d'un seul bloc, en général par un index
+- Un parcours complet de table
+- L'écriture du redo
+- Une lecture de fichier de contrôle
+= Malgré son nom, ce n'est pas une lecture séquentielle de la table.
+
+? Beaucoup de `db file scattered read` sur une application de caisse. Que soupçonnez-vous ?
+- Un disque trop rapide
++ Des parcours complets de tables, peut-être un index manquant ou inutilisable
+- Trop de COMMIT
+- Un verrou
+= Une caisse lit normalement quelques lignes par un index, pas des tables entières.
+
+? Une session attend sur `log file sync`. Que fait-elle ?
+- Elle lit un fichier redo
++ Elle attend que LGWR ait écrit son redo pour confirmer son COMMIT
+- Elle archive un fichier redo
+- Elle attend un verrou
+= Valider après chaque ligne multiplie ces attentes.
+
+? Quel événement révèle une contention dans la shared pool, souvent due à l'absence de variables de liaison ?
+- db file scattered read
+- log file sync
++ latch: shared pool
+- direct path read
+= Chaque requête différente doit être analysée et rangée dans la shared pool.

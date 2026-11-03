@@ -1,0 +1,105 @@
+# L'undo et la lecture cohérente
+@duree 10
+@resume Annuler, lire sans bloquer, et la célèbre erreur ORA-01555.
+
+## À quoi sert l'undo ?
+Avant de modifier un bloc, Oracle copie l'ancienne valeur dans un **segment d'undo**, rangé dans le **tablespace d'undo** (`UNDOTBS1`). Cette copie sert à trois choses :
+- **annuler** : un `ROLLBACK` remet les anciennes valeurs ;
+- **récupérer** : après une panne, SMON annule les transactions non validées ;
+- **lire de façon cohérente** : c'est le cœur du fonctionnement d'Oracle.
+
+## La lecture cohérente
+Une requête voit les données **telles qu'elles étaient au moment où elle a commencé**, même si d'autres sessions les modifient pendant qu'elle tourne. Chaque modification est datée par un numéro croissant, le **SCN** (System Change Number). Quand la requête rencontre un bloc modifié après son SCN de départ, Oracle reconstruit l'ancienne version du bloc à partir de l'undo.
+Résultat : **les lectures ne bloquent jamais les écritures, et les écritures ne bloquent jamais les lectures**. Un rapport de deux heures ne bloque pas la saisie des utilisateurs.
+
+## ORA-01555 : snapshot too old
+Une fois la transaction validée, son undo n'est plus indispensable : Oracle peut l'écraser pour faire de la place. Si une longue requête a encore besoin de cet undo pour reconstruire un bloc, elle échoue :
+```sql
+ORA-01555: snapshot too old: rollback segment number 7 with name
+"_SYSSMU7_2840923491$" too small
+```
+- `UNDO_RETENTION` (en secondes, 900 par défaut) : la durée pendant laquelle Oracle **essaie** de garder l'undo validé ;
+- si le tablespace d'undo est trop petit, Oracle écrase quand même ; `RETENTION GUARANTEE` interdit d'écraser, mais alors ce sont les transactions qui échouent faute de place ;
+- une boucle qui fait des COMMIT pendant qu'elle lit un curseur sur la même table (le « fetch across commit ») provoque elle-même ORA-01555.
+> La solution : une rétention au moins égale à la durée de la plus longue requête, et un tablespace d'undo assez grand (ou en autoextend) pour la tenir.
+
+## Le flashback query
+L'undo permet aussi de lire le passé :
+```sql
+SELECT salaire FROM employes
+AS OF TIMESTAMP SYSTIMESTAMP - INTERVAL '15' MINUTE
+WHERE id_employe = 3;
+```
+Très utile quand quelqu'un a fait un UPDATE malheureux il y a dix minutes… à condition que l'undo soit encore là.
+
+=== EXERCICES
+?? Affichez le nom et la valeur des paramètres qui commencent par `undo`.
+>> SELECT name, value FROM v$parameter WHERE name LIKE 'undo%'
+
+?? Affichez la rétention d'undo de PRODCM convertie en minutes.
+>> SELECT TO_NUMBER(value) / 60 AS minutes FROM v$parameter WHERE name = 'undo_retention'
+
+?? Affichez le nom, la taille en Mo et l'option d'extension automatique du fichier du tablespace d'undo.
+>> SELECT file_name, bytes / 1048576 AS mo, autoextensible FROM dba_data_files WHERE tablespace_name = 'UNDOTBS1'
+
+=== INCIDENT
+# Le rapport de nuit échoue avec ORA-01555
+@contexte Depuis trois nuits, le rapport financier lancé à 23 h échoue vers 1 h du matin avec ORA-01555. Il lit les ventes du mois pendant que le traitement de clôture met à jour ces mêmes tables. Le contrôleur de gestion veut une solution avant ce soir.
+?! Que vous dit ORA-01555 ?
+- Le tablespace d'undo est plein et les transactions échouent => Non : ce sont les transactions qui échoueraient (ORA-30036), pas la lecture.
++ La requête a besoin d'une version ancienne d'un bloc, mais l'undo correspondant a déjà été écrasé => Exact : le rapport tourne deux heures, et l'undo des modifications de la clôture n'est pas gardé aussi longtemps.
+- Le rapport contient une erreur de syntaxe => Une erreur de syntaxe échouerait tout de suite, pas après deux heures.
+?! Vous regardez la configuration de l'undo :
+| NAME              VALUE
+| ----------------  --------
+| undo_retention    900
+| undo_tablespace   UNDOTBS1
+|
+| FILE_NAME                         MO    AUTOEXTENSIBLE
+| /u02/oradata/PRODCM/undotbs01.dbf 4096  YES
+- La rétention de 900 secondes suffit, le problème est ailleurs => 900 secondes, c'est 15 minutes. Le rapport en dure 120.
++ La rétention (15 min) est bien trop courte pour une requête de 2 h => C'est la cause : Oracle n'essaie de garder l'undo validé que 15 minutes.
+- Le fichier d'undo est trop gros => Un gros undo ne fait jamais de mal ; c'est même ce qui va permettre de tenir une rétention plus longue.
+?! Que proposez-vous ?
+- Ajouter un COMMIT toutes les 1000 lignes dans le rapport => Pire : faire des COMMIT pendant la lecture d'un curseur aggrave ORA-01555. Et un rapport n'a rien à valider.
+- Augmenter la SGA => La SGA ne contient pas l'undo validé de façon durable : sans effet sur ORA-01555.
++ Porter undo_retention à 3 heures et vérifier que UNDOTBS1 peut grandir assez pour la tenir => `ALTER SYSTEM SET undo_retention = 10800 SCOPE = BOTH;`. Le fichier est en autoextend jusqu'à 32 Go : Oracle pourra garder l'undo assez longtemps. Vous surveillerez sa taille les premiers jours.
+?! Une autre piste, à discuter avec les équipes ?
++ Décaler le rapport après la fin de la clôture => Si le rapport ne lit plus des tables en cours de modification, le problème disparaît, et les chiffres sont en plus définitifs. Le paramètre reste une bonne sécurité.
+- Lancer le rapport en même temps sur deux sessions => Deux lectures longues au lieu d'une : même problème, en double.
+
+=== QUIZ
+? Quelles sont les trois utilités de l'undo ?
++ Annuler une transaction, récupérer après une panne, lire de façon cohérente
+- Sauvegarder, compresser, chiffrer
+- Trier, joindre, agréger
+- Archiver, restaurer, répliquer
+= L'undo garde les anciennes valeurs, utiles à ces trois mécanismes.
+
+? Une requête dure 30 minutes pendant que d'autres sessions modifient la table. Que voit-elle ?
+- Les données au moment où chaque ligne est lue
++ Les données telles qu'elles étaient au début de la requête
+- Une erreur de verrouillage
+- Seulement les lignes non modifiées
+= C'est la lecture cohérente, reconstruite grâce à l'undo.
+
+? Dans Oracle, une lecture bloque-t-elle une écriture ?
+- Oui, toujours
++ Non : lectures et écritures ne se bloquent pas
+- Oui, si la lecture dure plus de 15 minutes
+- Seulement dans le tablespace SYSTEM
+= Contrairement à d'autres SGBD, Oracle n'a pas de verrou de lecture.
+
+? Que règle UNDO_RETENTION ?
+- La taille du tablespace d'undo
++ La durée pendant laquelle Oracle essaie de garder l'undo des transactions validées
+- Le nombre de ROLLBACK autorisés
+- La durée des sauvegardes
+= C'est un objectif : sans RETENTION GUARANTEE, Oracle peut l'écraser s'il manque de place.
+
+? Que permet `SELECT … AS OF TIMESTAMP` ?
+- De planifier une requête
++ De lire les données telles qu'elles étaient à un instant passé, grâce à l'undo
+- De restaurer une table supprimée
+- D'accélérer une requête
+= C'est le flashback query, limité par l'undo encore disponible.
